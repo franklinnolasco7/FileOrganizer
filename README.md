@@ -50,16 +50,9 @@ Files will be automatically sorted into category folders based on file extension
 
 ---
 
-## 🪪 License
-
-This project is licensed under the **MIT License**.
-See the [LICENSE](LICENSE) file for details.
-
----
-
 ## 👤 Author
 
-**Opcode**
+**franklinnolasco7**
 
 ---
 
