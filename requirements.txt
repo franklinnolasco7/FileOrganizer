@@ -1,0 +1,5 @@
+# File Organizer Pro Dependencies
+# Install with: pip install -r requirements.txt
+
+PyQt6==6.7.0
+qfluentwidgets==0.4.7
