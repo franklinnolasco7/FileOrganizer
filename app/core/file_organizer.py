@@ -1,11 +1,12 @@
 """Core business logic for file organization."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set
 from app.core.constants import FileCategory, JEFF_SU_STRUCTURE
 from app.services.logger_service import LoggerService
 from app.services.file_service import FileService
 from app.core.file_manager import FileManager, FileOperationError
+from app.core.operation_history import OperationHistory
 
 
 class OrganizationError(Exception):
@@ -47,6 +48,8 @@ class FileOrganizer:
         self.logger = logger
         self.file_service = file_service or FileService()
         self.file_manager = file_manager or FileManager(logger)
+        self.history = OperationHistory()
+        self._created_folders: Set[Path] = set()
 
     def organize_folder(
         self,
@@ -68,6 +71,10 @@ class FileOrganizer:
             OrganizationError: If organization fails
         """
         try:
+            # Start new batch for undo tracking
+            self.history.start_batch()
+            self._created_folders.clear()
+            
             validated_source = self._validate_source_path(source_path)
             validated_dest = self._validate_destination_path(destination_path)
             categories = self._validate_categories(active_categories)
@@ -99,17 +106,7 @@ class FileOrganizer:
             raise OrganizationError(f"Failed to organize files: {str(e)}") from e
 
     def _validate_source_path(self, source_path: Path) -> Path:
-        """Validate source path exists and is a directory.
-        
-        Args:
-            source_path: Path to validate
-            
-        Returns:
-            Normalized Path object
-            
-        Raises:
-            OrganizationError: If path is invalid
-        """
+        """Validate source path exists and is a directory."""
         if not source_path:
             raise OrganizationError("Source path is required")
         if not isinstance(source_path, Path):
@@ -123,17 +120,7 @@ class FileOrganizer:
         return source_path.resolve()
 
     def _validate_destination_path(self, dest_path: Path) -> Path:
-        """Validate destination path; create if doesn't exist.
-        
-        Args:
-            dest_path: Path to validate
-            
-        Returns:
-            Normalized Path object
-            
-        Raises:
-            OrganizationError: If path is invalid or uncreatable
-        """
+        """Validate destination path; create if doesn't exist."""
         if not dest_path:
             raise OrganizationError("Destination path is required")
         if not isinstance(dest_path, Path):
@@ -156,17 +143,7 @@ class FileOrganizer:
         self,
         categories: List[FileCategory] | None
     ) -> List[FileCategory]:
-        """Validate active categories; default to all except OTHERS.
-        
-        Args:
-            categories: Categories to validate
-            
-        Returns:
-            Valid categories list
-            
-        Raises:
-            OrganizationError: If categories invalid
-        """
+        """Validate active categories; default to all except OTHERS."""
         if categories is None:
             return [cat for cat in FileCategory if cat.name != "OTHERS"]
 
@@ -187,16 +164,7 @@ class FileOrganizer:
         destination_path: Path,
         categories: List[FileCategory],
     ) -> OrganizationStats:
-        """Process each file and accumulate statistics.
-        
-        Args:
-            files: Files to process
-            destination_path: Destination directory
-            categories: Active categories
-            
-        Returns:
-            OrganizationStats with final counts
-        """
+        """Process each file and accumulate statistics."""
         stats = OrganizationStats()
 
         for file_path in files:
@@ -219,19 +187,7 @@ class FileOrganizer:
         destination_path: Path,
         active_categories: List[FileCategory],
     ) -> str:
-        """Move single file to its category folder.
-        
-        Args:
-            file_path: File to organize
-            destination_path: Destination root
-            active_categories: Active categories
-            
-        Returns:
-            "moved" or "skipped"
-            
-        Raises:
-            FileOperationError: If move fails
-        """
+        """Move single file to its category folder."""
         category = self.file_service.get_file_category(file_path)
 
         # Skip inactive categories (except OTHERS, which always accepts)
@@ -240,29 +196,103 @@ class FileOrganizer:
             return "skipped"
 
         category_folder = destination_path / category.value
+        
+        # Track if folder was created (for undo)
+        folder_existed = category_folder.exists()
         category_folder.mkdir(exist_ok=True, parents=True)
+        if not folder_existed:
+            self._created_folders.add(category_folder)
 
         destination_file = category_folder / file_path.name
         result = self.file_manager.move_file(source=file_path, destination=destination_file)
         
         if result.success:
+            # Record operation for undo
+            self.history.record_operation(
+                source=file_path,
+                destination=result.path,
+                category=category.value,
+            )
+            
             self.logger.info(f"✓ {file_path.name} → {category.value}/")
             return "moved"
         else:
             raise FileOperationError(f"Failed to move {file_path.name}: {result.error}")
 
+    def undo_last_operation(self) -> Dict[str, int]:
+        """Undo the last organize operation and clean up empty folders."""
+        if not self.history.can_undo():
+            raise OrganizationError("No operations to undo")
+        
+        batch = self.history.get_undo_batch()
+        if not batch:
+            raise OrganizationError("No operations to undo")
+        
+        self.logger.separator()
+        self.logger.info(f"Undoing {len(batch)} file operations...")
+        
+        stats = {"restored": 0, "errors": 0, "folders_removed": 0}
+        folders_to_check: Set[Path] = set()
+        
+        # Process in reverse order
+        for operation in reversed(batch):
+            try:
+                # Track parent folder for cleanup
+                folders_to_check.add(operation.destination.parent)
+                
+                # Move file back to original location
+                result = self.file_manager.move_file(
+                    source=operation.destination,
+                    destination=operation.source
+                )
+                
+                if result.success:
+                    self.logger.info(f"↩ {operation.destination.name} → {operation.source.parent.name}/")
+                    stats["restored"] += 1
+                else:
+                    self.logger.error(f"Failed to restore {operation.destination.name}")
+                    stats["errors"] += 1
+            except Exception as e:
+                self.logger.error(f"Undo error: {str(e)}")
+                stats["errors"] += 1
+        
+        # Clean up empty category folders
+        for folder in folders_to_check:
+            try:
+                if folder.exists() and self._is_empty_directory(folder):
+                    folder.rmdir()
+                    self.logger.info(f"🗑 Removed empty folder: {folder.name}/")
+                    stats["folders_removed"] += 1
+            except Exception as e:
+                self.logger.warning(f"Could not remove folder {folder.name}: {str(e)}")
+        
+        # Mark undo as complete
+        self.history.mark_undo_complete()
+        self._created_folders.clear()
+        
+        self.logger.separator()
+        self.logger.success(f"Undo complete! Restored {stats['restored']} files")
+        if stats["folders_removed"] > 0:
+            self.logger.info(f"Removed {stats['folders_removed']} empty folders")
+        if stats["errors"] > 0:
+            self.logger.warning(f"Errors during undo: {stats['errors']}")
+        self.logger.separator()
+        
+        return stats
+
+    @staticmethod
+    def _is_empty_directory(path: Path) -> bool:
+        """Check if directory is empty (no files or subdirectories)."""
+        try:
+            return path.is_dir() and not any(path.iterdir())
+        except Exception:
+            return False
+
     def create_jeff_su_framework(
         self,
         destination_path: Path,
     ) -> bool:
-        """Create Jeff Su framework folder structure with READMEs.
-        
-        Args:
-            destination_path: Where to create framework
-            
-        Returns:
-            True if successful
-        """
+        """Create Jeff Su framework folder structure with READMEs."""
         try:
             self._validate_destination_path(destination_path)
             self.logger.separator()
@@ -294,18 +324,9 @@ class FileOrganizer:
 
     @staticmethod
     def _generate_readme(folder_name: str, info: Dict[str, str]) -> str:
-        """Generate README content for framework folder.
-        
-        Args:
-            folder_name: Folder name
-            info: Folder metadata
-            
-        Returns:
-            README content string
-        """
+        """Generate README content for framework folder."""
         return f"""JEFF SU FILE MANAGEMENT FRAMEWORK
 ═══════════════════════════════════════════════════
-
 
 
 Folder: {folder_name}
@@ -313,10 +334,8 @@ Description: {info['description']}
 Keywords: {info['keywords']}
 
 
-
 This folder is part of Jeff Su's File Management Framework.
 Windows CLI Compatible (no brackets [ ])
-
 
 
 PRINCIPLES:
@@ -328,16 +347,11 @@ PRINCIPLES:
 • Archive quarterly
 
 
-
 ═══════════════════════════════════════════════════
 """
 
     def _log_completion_stats(self, stats: OrganizationStats) -> None:
-        """Log final organization statistics.
-        
-        Args:
-            stats: Final statistics
-        """
+        """Log final organization statistics."""
         self.logger.separator()
         self.logger.success("Organization complete!")
         self.logger.info(f"✓ Moved: {stats.moved}")

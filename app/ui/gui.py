@@ -40,10 +40,7 @@ class ColoredPlainTextEdit(PlainTextEdit):
         self.setMaximumBlockCount(500)
     
     def append_colored(self, message: str) -> None:
-        """Append message with color based on log level.
-        
-        Blocks signals during insertion to prevent UI thrashing.
-        """
+        """Append message with color based on log level."""
         level = self._extract_level(message)
         formatted_msg = self._strip_timestamp(message)
         
@@ -94,6 +91,7 @@ class OrganizePage:
         on_browse_source,
         on_browse_dest,
         on_clear_log,
+        on_undo=None,
     ) -> None:
         """Initialize organize page with callbacks.
         
@@ -102,11 +100,13 @@ class OrganizePage:
             on_browse_source: Callback for source browse
             on_browse_dest: Callback for destination browse
             on_clear_log: Callback for clear log
+            on_undo: Callback for undo action
         """
         self.on_organize = on_organize
         self.on_browse_source = on_browse_source
         self.on_browse_dest = on_browse_dest
         self.on_clear_log = on_clear_log
+        self.on_undo = on_undo or (lambda: None)
 
     def create(self) -> QWidget:
         """Create organize page widget"""
@@ -213,7 +213,7 @@ class OrganizePage:
         return card
 
     def _create_button_layout(self) -> QHBoxLayout:
-        """Create action button layout"""
+        """Create action button layout with Undo button"""
         layout = QHBoxLayout()
         layout.setSpacing(8)
 
@@ -222,6 +222,13 @@ class OrganizePage:
         organize_btn.clicked.connect(self.on_organize)
         layout.addWidget(organize_btn)
 
+        # Add Undo button
+        self.undo_btn = PushButton("Undo")
+        self.undo_btn.setMinimumWidth(80)
+        self.undo_btn.setEnabled(False)
+        self.undo_btn.clicked.connect(self.on_undo)
+        layout.addWidget(self.undo_btn)
+
         clear_btn = PushButton("Clear Log")
         clear_btn.setMinimumWidth(100)
         clear_btn.clicked.connect(self.on_clear_log)
@@ -229,6 +236,11 @@ class OrganizePage:
 
         layout.addStretch()
         return layout
+
+    def set_undo_enabled(self, enabled: bool) -> None:
+        """Enable or disable undo button"""
+        if hasattr(self, 'undo_btn'):
+            self.undo_btn.setEnabled(enabled)
 
     def get_source(self) -> str:
         """Get source folder path"""
@@ -255,12 +267,7 @@ class InfoPageWithMarkdown:
     """Scrollable page with markdown content rendering."""
     
     def __init__(self, title: str, markdown_content: str) -> None:
-        """Initialize info page.
-        
-        Args:
-            title: Page title
-            markdown_content: Page content in Markdown format
-        """
+        """Initialize info page."""
         self.title = title
         self.markdown_content = markdown_content
 
@@ -396,13 +403,7 @@ class FileOrganizerWindow(QMainWindow):
         config: ConfigManager,
         logger: LoggerService,
     ) -> None:
-        """Initialize main window with dependency injection.
-        
-        Args:
-            file_organizer: FileOrganizer instance
-            config: ConfigManager instance
-            logger: LoggerService instance
-        """
+        """Initialize main window with dependency injection."""
         super().__init__()
 
         self.organizer = file_organizer
@@ -429,6 +430,7 @@ class FileOrganizerWindow(QMainWindow):
             on_browse_source=self._browse_source,
             on_browse_dest=self._browse_dest,
             on_clear_log=self._clear_log,
+            on_undo=self._handle_undo,
         )
         self.organize_page = self.organize_page_obj.create()
 
@@ -493,6 +495,12 @@ class FileOrganizerWindow(QMainWindow):
                 Path(destination),
                 categories
             )
+            
+            # Enable undo button after successful organization
+            self.organize_page_obj.set_undo_enabled(
+                self.organizer.history.can_undo()
+            )
+            
             QMessageBox.information(
                 self, "Success",
                 f"Organization Complete!\n\nMoved: {stats['moved']}\n"
@@ -500,6 +508,39 @@ class FileOrganizerWindow(QMainWindow):
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Organization failed: {str(e)}")
+
+    def _handle_undo(self) -> None:
+        """Handle undo action with confirmation"""
+        if not self.organizer.history.can_undo():
+            QMessageBox.warning(self, "Undo", "No operations to undo")
+            return
+        
+        # Confirm undo
+        reply = QMessageBox.question(
+            self,
+            "Confirm Undo",
+            "Are you sure you want to undo the last organization?\n"
+            "Files will be moved back to their original locations.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                stats = self.organizer.undo_last_operation()
+                
+                # Update undo button state
+                self.organize_page_obj.set_undo_enabled(
+                    self.organizer.history.can_undo()
+                )
+                
+                QMessageBox.information(
+                    self, "Undo Complete",
+                    f"Successfully restored {stats['restored']} files!\n"
+                    f"Errors: {stats['errors']}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Undo Failed", f"Undo operation failed: {str(e)}")
 
     def _browse_source(self) -> None:
         """Browse source folder"""
