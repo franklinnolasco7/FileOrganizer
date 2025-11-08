@@ -3,14 +3,16 @@ import sys
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
-    QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, QPlainTextEdit
+    QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
+    QPlainTextEdit, QProgressBar
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
 
 from qfluentwidgets import (
     PushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
-    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface
+    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface,
+    ProgressBar, IndeterminateProgressBar
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -82,6 +84,56 @@ class ColoredPlainTextEdit(PlainTextEdit):
         return "INFO"
 
 
+class OrganizeWorker(QThread):
+    """Background worker for file organization with progress updates."""
+    
+    progress = pyqtSignal(int, int)  # current, total
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    
+    def __init__(self, organizer: FileOrganizer, source: Path, dest: Path, categories: list):
+        """Initialize worker with organization parameters."""
+        super().__init__()
+        self.organizer = organizer
+        self.source = source
+        self.dest = dest
+        self.categories = categories
+    
+    def run(self):
+        """Run organization in background thread."""
+        try:
+            # Get file count first
+            files = self.organizer.file_manager.get_files_in_folder(self.source)
+            total_files = len(files)
+            
+            # Track progress
+            self._setup_progress_tracking(total_files)
+            
+            # Perform organization
+            stats = self.organizer.organize_folder(
+                self.source,
+                self.dest,
+                self.categories
+            )
+            
+            self.finished.emit(stats)
+            
+        except Exception as e:
+            self.error.emit(str(e))
+    
+    def _setup_progress_tracking(self, total_files: int):
+        """Setup progress tracking by subscribing to logger."""
+        self.current = 0
+        self.total = total_files
+        
+        def track_progress(message: str):
+            if "✓" in message or "→" in message:
+                self.current += 1
+                self.progress.emit(self.current, self.total)
+        
+        self.organizer.logger.subscribe(track_progress)
+
+
 class OrganizePage:
     """File organization page with source/dest/category inputs and live log."""
     
@@ -93,15 +145,7 @@ class OrganizePage:
         on_clear_log,
         on_undo=None,
     ) -> None:
-        """Initialize organize page with callbacks.
-        
-        Args:
-            on_organize: Callback for organize action
-            on_browse_source: Callback for source browse
-            on_browse_dest: Callback for destination browse
-            on_clear_log: Callback for clear log
-            on_undo: Callback for undo action
-        """
+        """Initialize organize page with callbacks."""
         self.on_organize = on_organize
         self.on_browse_source = on_browse_source
         self.on_browse_dest = on_browse_dest
@@ -123,6 +167,7 @@ class OrganizePage:
         layout.addWidget(self._create_source_card())
         layout.addWidget(self._create_dest_card())
         layout.addWidget(self._create_category_card())
+        layout.addWidget(self._create_progress_card())
         layout.addWidget(self._create_log_card())
         layout.addLayout(self._create_button_layout())
         layout.addStretch()
@@ -198,6 +243,28 @@ class OrganizePage:
         layout.addLayout(check_layout)
         return card
 
+    def _create_progress_card(self) -> CardWidget:
+        """Create progress bar card"""
+        card = CardWidget()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(BodyLabel("Progress"))
+        self.progress_label = BodyLabel("Ready")
+        label_layout.addStretch()
+        label_layout.addWidget(self.progress_label)
+        layout.addLayout(label_layout)
+
+        self.progress_bar = ProgressBar()
+        self.progress_bar.setMinimumHeight(8)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        return card
+
     def _create_log_card(self) -> CardWidget:
         """Create activity log card"""
         card = CardWidget()
@@ -217,12 +284,11 @@ class OrganizePage:
         layout = QHBoxLayout()
         layout.setSpacing(8)
 
-        organize_btn = PushButton("Organize Files")
-        organize_btn.setMinimumWidth(100)
-        organize_btn.clicked.connect(self.on_organize)
-        layout.addWidget(organize_btn)
+        self.organize_btn = PushButton("Organize Files")
+        self.organize_btn.setMinimumWidth(100)
+        self.organize_btn.clicked.connect(self.on_organize)
+        layout.addWidget(self.organize_btn)
 
-        # Add Undo button
         self.undo_btn = PushButton("Undo")
         self.undo_btn.setMinimumWidth(80)
         self.undo_btn.setEnabled(False)
@@ -241,6 +307,30 @@ class OrganizePage:
         """Enable or disable undo button"""
         if hasattr(self, 'undo_btn'):
             self.undo_btn.setEnabled(enabled)
+
+    def set_buttons_enabled(self, enabled: bool) -> None:
+        """Enable or disable organize and undo buttons during processing"""
+        if hasattr(self, 'organize_btn'):
+            self.organize_btn.setEnabled(enabled)
+        if hasattr(self, 'undo_btn') and enabled:
+            # Only enable if there's something to undo
+            pass
+        elif hasattr(self, 'undo_btn'):
+            self.undo_btn.setEnabled(False)
+
+    def update_progress(self, current: int, total: int) -> None:
+        """Update progress bar and label"""
+        if total > 0:
+            percentage = int((current / total) * 100)
+            self.progress_bar.setValue(percentage)
+            self.progress_label.setText(f"{current}/{total} files")
+
+    def show_progress(self, show: bool) -> None:
+        """Show or hide progress bar"""
+        self.progress_bar.setVisible(show)
+        if not show:
+            self.progress_bar.setValue(0)
+            self.progress_label.setText("Ready")
 
     def get_source(self) -> str:
         """Get source folder path"""
@@ -369,6 +459,8 @@ ABOUT_MARKDOWN = """
 - **Real-time Logging** — Live activity feedback
 - **Modern UI** — Windows 11 Fluent Design
 - **Persistent Settings** — Remember your preferences
+- **Undo/Redo** — Rollback operations safely
+- **Progress Tracking** — Real-time progress bar
 
 ### Architecture
 
@@ -409,6 +501,7 @@ class FileOrganizerWindow(QMainWindow):
         self.organizer = file_organizer
         self.config = config
         self.logger = logger
+        self.worker = None
 
         setTheme(Theme.DARK)
         self._setup_ui()
@@ -474,7 +567,7 @@ class FileOrganizerWindow(QMainWindow):
         self.move(x, y)
 
     def _handle_organize(self) -> None:
-        """Handle organize action with validation"""
+        """Handle organize action with validation and background processing"""
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
@@ -489,25 +582,51 @@ class FileOrganizerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Select at least one category")
             return
 
-        try:
-            stats = self.organizer.organize_folder(
-                Path(source),
-                Path(destination),
-                categories
-            )
-            
-            # Enable undo button after successful organization
-            self.organize_page_obj.set_undo_enabled(
-                self.organizer.history.can_undo()
-            )
-            
-            QMessageBox.information(
-                self, "Success",
-                f"Organization Complete!\n\nMoved: {stats['moved']}\n"
-                f"Errors: {stats['errors']}\nSkipped: {stats['skipped']}"
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Organization failed: {str(e)}")
+        # Disable buttons during processing
+        self.organize_page_obj.set_buttons_enabled(False)
+        self.organize_page_obj.show_progress(True)
+
+        # Create and start worker thread
+        self.worker = OrganizeWorker(
+            self.organizer,
+            Path(source),
+            Path(destination),
+            categories
+        )
+        
+        self.worker.progress.connect(self._on_progress)
+        self.worker.finished.connect(self._on_organize_finished)
+        self.worker.error.connect(self._on_organize_error)
+        self.worker.start()
+
+    def _on_progress(self, current: int, total: int) -> None:
+        """Handle progress updates"""
+        self.organize_page_obj.update_progress(current, total)
+
+    def _on_organize_finished(self, stats: dict) -> None:
+        """Handle organization completion"""
+        self.organize_page_obj.show_progress(False)
+        self.organize_page_obj.set_buttons_enabled(True)
+        
+        # Enable undo button
+        self.organize_page_obj.set_undo_enabled(
+            self.organizer.history.can_undo()
+        )
+        
+        QMessageBox.information(
+            self, "Success",
+            f"Organization Complete!\n\nMoved: {stats['moved']}\n"
+            f"Errors: {stats['errors']}\nSkipped: {stats['skipped']}"
+        )
+        
+        self.worker = None
+
+    def _on_organize_error(self, error: str) -> None:
+        """Handle organization error"""
+        self.organize_page_obj.show_progress(False)
+        self.organize_page_obj.set_buttons_enabled(True)
+        QMessageBox.critical(self, "Error", f"Organization failed: {error}")
+        self.worker = None
 
     def _handle_undo(self) -> None:
         """Handle undo action with confirmation"""
@@ -515,7 +634,6 @@ class FileOrganizerWindow(QMainWindow):
             QMessageBox.warning(self, "Undo", "No operations to undo")
             return
         
-        # Confirm undo
         reply = QMessageBox.question(
             self,
             "Confirm Undo",
@@ -529,7 +647,6 @@ class FileOrganizerWindow(QMainWindow):
             try:
                 stats = self.organizer.undo_last_operation()
                 
-                # Update undo button state
                 self.organize_page_obj.set_undo_enabled(
                     self.organizer.history.can_undo()
                 )
@@ -537,7 +654,8 @@ class FileOrganizerWindow(QMainWindow):
                 QMessageBox.information(
                     self, "Undo Complete",
                     f"Successfully restored {stats['restored']} files!\n"
-                    f"Errors: {stats['errors']}"
+                    f"Errors: {stats['errors']}\n"
+                    f"Folders removed: {stats.get('folders_removed', 0)}"
                 )
             except Exception as e:
                 QMessageBox.critical(self, "Undo Failed", f"Undo operation failed: {str(e)}")
