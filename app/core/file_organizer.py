@@ -1,5 +1,5 @@
 """Core business logic for file organization."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Set
 from app.core.constants import FileCategory, JEFF_SU_STRUCTURE
@@ -38,18 +38,60 @@ class FileOrganizer:
         file_service: FileService | None = None,
         file_manager: FileManager | None = None,
     ) -> None:
-        """Initialize file organizer with dependency injection.
-        
-        Args:
-            logger: LoggerService for logging
-            file_service: FileService (injected for testability)
-            file_manager: FileManager (injected for testability)
-        """
+        """Initialize file organizer with dependency injection."""
         self.logger = logger
         self.file_service = file_service or FileService()
         self.file_manager = file_manager or FileManager(logger)
         self.history = OperationHistory()
         self._created_folders: Set[Path] = set()
+
+    def preview_organization(
+        self,
+        source_path: Path,
+        destination_path: Path,
+        active_categories: List[FileCategory] | None = None,
+    ) -> Dict:
+        """Preview files that will be organized without moving them.
+        
+        Args:
+            source_path: Source folder path
+            destination_path: Destination folder path
+            active_categories: Categories to organize
+            
+        Returns:
+            Dictionary with preview data (total, summary, files)
+        """
+        validated_source = self._validate_source_path(source_path)
+        validated_dest = self._validate_destination_path(destination_path)
+        categories = self._validate_categories(active_categories)
+        
+        files = self.file_manager.get_files_in_folder(validated_source)
+        
+        preview_data = {
+            'total': 0,
+            'summary': {},
+            'files': []
+        }
+        
+        for file_path in files:
+            category = self.file_service.get_file_category(file_path)
+            
+            # Include file if category is active or OTHERS
+            if category in categories or category == FileCategory.OTHERS:
+                preview_data['total'] += 1
+                
+                # Count by category
+                cat_name = category.value
+                preview_data['summary'][cat_name] = preview_data['summary'].get(cat_name, 0) + 1
+                
+                # Add file details
+                preview_data['files'].append({
+                    'name': file_path.name,
+                    'current': str(file_path.parent),
+                    'category': cat_name
+                })
+        
+        return preview_data
 
     def organize_folder(
         self,
@@ -57,21 +99,8 @@ class FileOrganizer:
         destination_path: Path,
         active_categories: List[FileCategory] | None = None,
     ) -> Dict[str, int]:
-        """Organize files from source to destination by category.
-        
-        Args:
-            source_path: Source folder path
-            destination_path: Destination folder path
-            active_categories: Categories to organize (None = all except OTHERS)
-            
-        Returns:
-            Dictionary with organization statistics
-            
-        Raises:
-            OrganizationError: If organization fails
-        """
+        """Organize files from source to destination by category."""
         try:
-            # Start new batch for undo tracking
             self.history.start_batch()
             self._created_folders.clear()
             
@@ -190,14 +219,12 @@ class FileOrganizer:
         """Move single file to its category folder."""
         category = self.file_service.get_file_category(file_path)
 
-        # Skip inactive categories (except OTHERS, which always accepts)
         if category not in active_categories and category != FileCategory.OTHERS:
             self.logger.debug(f"⊘ {file_path.name} (category inactive)")
             return "skipped"
 
         category_folder = destination_path / category.value
         
-        # Track if folder was created (for undo)
         folder_existed = category_folder.exists()
         category_folder.mkdir(exist_ok=True, parents=True)
         if not folder_existed:
@@ -207,7 +234,6 @@ class FileOrganizer:
         result = self.file_manager.move_file(source=file_path, destination=destination_file)
         
         if result.success:
-            # Record operation for undo
             self.history.record_operation(
                 source=file_path,
                 destination=result.path,
@@ -234,13 +260,10 @@ class FileOrganizer:
         stats = {"restored": 0, "errors": 0, "folders_removed": 0}
         folders_to_check: Set[Path] = set()
         
-        # Process in reverse order
         for operation in reversed(batch):
             try:
-                # Track parent folder for cleanup
                 folders_to_check.add(operation.destination.parent)
                 
-                # Move file back to original location
                 result = self.file_manager.move_file(
                     source=operation.destination,
                     destination=operation.source
@@ -256,7 +279,6 @@ class FileOrganizer:
                 self.logger.error(f"Undo error: {str(e)}")
                 stats["errors"] += 1
         
-        # Clean up empty category folders
         for folder in folders_to_check:
             try:
                 if folder.exists() and self._is_empty_directory(folder):
@@ -266,7 +288,6 @@ class FileOrganizer:
             except Exception as e:
                 self.logger.warning(f"Could not remove folder {folder.name}: {str(e)}")
         
-        # Mark undo as complete
         self.history.mark_undo_complete()
         self._created_folders.clear()
         
@@ -282,7 +303,7 @@ class FileOrganizer:
 
     @staticmethod
     def _is_empty_directory(path: Path) -> bool:
-        """Check if directory is empty (no files or subdirectories)."""
+        """Check if directory is empty."""
         try:
             return path.is_dir() and not any(path.iterdir())
         except Exception:

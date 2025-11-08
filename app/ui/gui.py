@@ -4,9 +4,9 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
-    QPlainTextEdit
+    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent
 
 from qfluentwidgets import (
@@ -19,6 +19,7 @@ from app.core.file_organizer import FileOrganizer
 from app.core.constants import FileCategory
 from app.config.config_manager import ConfigManager
 from app.services.logger_service import LoggerService
+
 
 class DragDropLineEdit(LineEdit):
     """LineEdit with enhanced drag and drop support for folders."""
@@ -67,7 +68,7 @@ class DragDropLineEdit(LineEdit):
         """
         
         self.setStyleSheet(self._default_style)
-        self.setFixedHeight(38)  
+        self.setFixedHeight(38)
     
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """Handle drag enter with visual feedback."""
@@ -143,6 +144,7 @@ class DragDropLineEdit(LineEdit):
             else:
                 self.setPlaceholderText("Select or drag destination folder...")
 
+
 class ColoredPlainTextEdit(PlainTextEdit):
     """Custom text edit with color-coded log levels."""
     
@@ -205,6 +207,96 @@ class ColoredPlainTextEdit(PlainTextEdit):
         return "INFO"
 
 
+class PreviewDialog(QDialog):
+    """Dialog showing file organization preview."""
+    
+    def __init__(self, preview_data: dict, parent=None):
+        """Initialize preview dialog with file data."""
+        super().__init__(parent)
+        self.setWindowTitle("File Organization Preview")
+        self.resize(900, 600)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        
+        # Title
+        title = TitleLabel(f"Found {preview_data['total']} files to organize")
+        layout.addWidget(title)
+        
+        # Category summary
+        if preview_data['summary']:
+            summary_card = self._create_summary_card(preview_data['summary'])
+            layout.addWidget(summary_card)
+        
+        # File list table
+        if preview_data['files']:
+            layout.addWidget(BodyLabel("File Details:"))
+            table = self._create_file_table(preview_data['files'])
+            layout.addWidget(table, 1)
+        
+        # Close button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        close_btn = PushButton("Close")
+        close_btn.setMinimumWidth(100)
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+    
+    def _create_summary_card(self, summary: dict) -> CardWidget:
+        """Create summary card with category counts."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(8)
+        
+        card_layout.addWidget(BodyLabel("Files per Category:"))
+        
+        # Create grid layout for categories
+        grid_layout = QHBoxLayout()
+        for category, count in summary.items():
+            cat_label = BodyLabel(f"📁 {category}: {count}")
+            cat_label.setStyleSheet("font-weight: 500;")
+            grid_layout.addWidget(cat_label)
+        
+        grid_layout.addStretch()
+        card_layout.addLayout(grid_layout)
+        
+        return card
+    
+    def _create_file_table(self, files: list) -> QTableWidget:
+        """Create table showing files and their destinations."""
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["File Name", "Current Location", "Destination Category"])
+        table.setRowCount(len(files))
+        
+        for row, file_info in enumerate(files):
+            # File name
+            name_item = QTableWidgetItem(file_info['name'])
+            table.setItem(row, 0, name_item)
+            
+            # Current location
+            current_item = QTableWidgetItem(file_info['current'])
+            table.setItem(row, 1, current_item)
+            
+            # Category
+            cat_item = QTableWidgetItem(file_info['category'])
+            table.setItem(row, 2, cat_item)
+        
+        # Resize columns
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        
+        return table
+
+
 class OrganizePage:
     """File organization page with source/dest/category inputs and live log."""
     
@@ -215,6 +307,7 @@ class OrganizePage:
         on_browse_dest,
         on_clear_log,
         on_undo=None,
+        on_preview=None,
     ) -> None:
         """Initialize organize page with callbacks."""
         self.on_organize = on_organize
@@ -222,6 +315,7 @@ class OrganizePage:
         self.on_browse_dest = on_browse_dest
         self.on_clear_log = on_clear_log
         self.on_undo = on_undo or (lambda: None)
+        self.on_preview = on_preview or (lambda: None)
 
     def create(self) -> QWidget:
         """Create organize page widget"""
@@ -344,21 +438,30 @@ class OrganizePage:
         return card
 
     def _create_button_layout(self) -> QHBoxLayout:
-        """Create action button layout with Undo button"""
+        """Create action button layout with Preview and Undo buttons"""
         layout = QHBoxLayout()
         layout.setSpacing(8)
 
+        # Preview button
+        preview_btn = PushButton("Preview")
+        preview_btn.setMinimumWidth(80)
+        preview_btn.clicked.connect(self.on_preview)
+        layout.addWidget(preview_btn)
+
+        # Organize button
         self.organize_btn = PushButton("Organize Files")
-        self.organize_btn.setMinimumWidth(100)
+        self.organize_btn.setMinimumWidth(120)
         self.organize_btn.clicked.connect(self.on_organize)
         layout.addWidget(self.organize_btn)
 
+        # Undo button
         self.undo_btn = PushButton("Undo")
         self.undo_btn.setMinimumWidth(80)
         self.undo_btn.setEnabled(False)
         self.undo_btn.clicked.connect(self.on_undo)
         layout.addWidget(self.undo_btn)
 
+        # Clear Log button
         clear_btn = PushButton("Clear Log")
         clear_btn.setMinimumWidth(100)
         clear_btn.clicked.connect(self.on_clear_log)
@@ -495,11 +598,12 @@ GUIDE_MARKDOWN = """
 ABOUT_MARKDOWN = """
 # File Organizer Pro
 
-## Version 2.0.0
+## Version 2.1.0
 
 ### Features
 
 - **Automatic Organization** — Sort files by category
+- **Preview Mode** — See what will be organized before committing
 - **Jeff Su Framework** — Professional folder structure
 - **Real-time Logging** — Live activity feedback
 - **Modern UI** — Windows 11 Fluent Design
@@ -568,6 +672,7 @@ class FileOrganizerWindow(QMainWindow):
             on_browse_dest=self._browse_dest,
             on_clear_log=self._clear_log,
             on_undo=self._handle_undo,
+            on_preview=self._handle_preview,
         )
         self.organize_page = self.organize_page_obj.create()
 
@@ -609,6 +714,40 @@ class FileOrganizerWindow(QMainWindow):
         x = (geometry.width() - self.width()) // 2 + geometry.x()
         y = (geometry.height() - self.height()) // 2 + geometry.y()
         self.move(x, y)
+
+    def _handle_preview(self) -> None:
+        """Show preview of files to be organized."""
+        source = self.organize_page_obj.get_source()
+        destination = self.organize_page_obj.get_destination()
+        categories = self.organize_page_obj.get_active_categories()
+
+        if not source or not Path(source).exists():
+            QMessageBox.warning(self, "Error", "Invalid source folder")
+            return
+        if not destination:
+            QMessageBox.warning(self, "Error", "Select destination folder")
+            return
+        if not categories:
+            QMessageBox.warning(self, "Error", "Select at least one category")
+            return
+
+        try:
+            preview_data = self.organizer.preview_organization(
+                Path(source),
+                Path(destination),
+                categories
+            )
+
+            if preview_data['total'] == 0:
+                QMessageBox.information(self, "Preview", "No files found to organize")
+                return
+
+            # Show preview dialog
+            dialog = PreviewDialog(preview_data, self)
+            dialog.exec()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Preview failed: {str(e)}")
 
     def _handle_organize(self) -> None:
         """Handle organize action with validation"""
