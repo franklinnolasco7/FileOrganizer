@@ -44,13 +44,16 @@ class LoggerService:
             self._subscribers.append(callback)
 
     def unsubscribe(self, callback: Callable[[str], None]) -> None:
-        """Unsubscribe from log events.
+        """Unsubscribe from log events (safe - no error if not found).
         
         Args:
             callback: Callback to remove
         """
-        if callback in self._subscribers:
-            self._subscribers.remove(callback)
+        try:
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
+        except (ValueError, AttributeError):
+            pass
 
     def _notify_subscribers(self, message: str, level: LogLevel) -> None:
         """Notify all subscribers; trap exceptions so one failure doesn't break others.
@@ -59,7 +62,7 @@ class LoggerService:
             message: Formatted log message
             level: Log level for filtering (optional for future use)
         """
-        for subscriber in self._subscribers:
+        for subscriber in self._subscribers[:]:  # Iterate over copy to allow unsubscribe during callback
             try:
                 subscriber(message)
             except Exception as e:
@@ -100,7 +103,7 @@ class LoggerService:
         """Log visual separator"""
         separator = "═" * 100
         self._log_history.append(separator)
-        for subscriber in self._subscribers:
+        for subscriber in self._subscribers[:]:  # Iterate over copy
             try:
                 subscriber(separator)
             except Exception as e:

@@ -4,15 +4,14 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
-    QPlainTextEdit, QProgressBar
+    QPlainTextEdit
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent
 
 from qfluentwidgets import (
     PushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
-    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface,
-    ProgressBar, IndeterminateProgressBar
+    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -21,6 +20,128 @@ from app.core.constants import FileCategory
 from app.config.config_manager import ConfigManager
 from app.services.logger_service import LoggerService
 
+class DragDropLineEdit(LineEdit):
+    """LineEdit with enhanced drag and drop support for folders."""
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize drag-drop enabled line edit."""
+        super().__init__(*args, **kwargs)
+        self.setAcceptDrops(True)
+        self._is_dragging = False
+        
+        self._default_style = """
+            QLineEdit {
+                border: 2px solid transparent;
+                border-radius: 6px;
+                padding: 9px 12px;
+                background-color: rgba(255, 255, 255, 0.05);
+                font-size: 13px;
+            }
+            QLineEdit:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
+            QLineEdit:focus {
+                border: 2px solid #0078D4;
+                background-color: rgba(255, 255, 255, 0.05);
+            }
+        """
+        
+        self._drag_style = """
+            QLineEdit {
+                border: 2px dashed #4CAF50;
+                border-radius: 6px;
+                padding: 9px 12px;
+                background-color: rgba(76, 175, 80, 0.15);
+                font-size: 13px;
+            }
+        """
+        
+        self._invalid_style = """
+            QLineEdit {
+                border: 2px dashed #F44336;
+                border-radius: 6px;
+                padding: 9px 12px;
+                background-color: rgba(244, 67, 54, 0.15);
+                font-size: 13px;
+            }
+        """
+        
+        self.setStyleSheet(self._default_style)
+        self.setFixedHeight(38)  
+    
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        """Handle drag enter with visual feedback."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls:
+                path = Path(urls[0].toLocalFile())
+                if path.is_dir():
+                    event.acceptProposedAction()
+                    self._is_dragging = True
+                    self.setStyleSheet(self._drag_style)
+                    self.setPlaceholderText("Drop folder here...")
+                else:
+                    event.ignore()
+                    self._is_dragging = True
+                    self.setStyleSheet(self._invalid_style)
+                    self.setPlaceholderText("❌ Folders only")
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event) -> None:
+        """Handle drag move to maintain styling."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls and Path(urls[0].toLocalFile()).is_dir():
+                event.acceptProposedAction()
+    
+    def dragLeaveEvent(self, event) -> None:
+        """Reset styling when drag leaves."""
+        self._is_dragging = False
+        self.setStyleSheet(self._default_style)
+        self._reset_placeholder()
+    
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Handle drop with validation and feedback."""
+        self._is_dragging = False
+        self.setStyleSheet(self._default_style)
+        
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if urls:
+                folder_path = Path(urls[0].toLocalFile())
+                if folder_path.is_dir():
+                    self.setText(str(folder_path))
+                    event.acceptProposedAction()
+                    self._reset_placeholder()
+                    
+                    self.setStyleSheet("""
+                        QLineEdit {
+                            border: 2px solid #4CAF50;
+                            border-radius: 6px;
+                            padding: 9px 12px;
+                            background-color: rgba(76, 175, 80, 0.2);
+                            font-size: 13px;
+                        }
+                    """)
+                    
+                    QTimer.singleShot(500, lambda: self.setStyleSheet(self._default_style))
+                else:
+                    event.ignore()
+                    self._reset_placeholder()
+        else:
+            event.ignore()
+            self._reset_placeholder()
+    
+    def _reset_placeholder(self) -> None:
+        """Reset placeholder to original text."""
+        if not self.text():
+            if hasattr(self, 'objectName') and 'source' in self.objectName().lower():
+                self.setPlaceholderText("Select or drag source folder...")
+            else:
+                self.setPlaceholderText("Select or drag destination folder...")
 
 class ColoredPlainTextEdit(PlainTextEdit):
     """Custom text edit with color-coded log levels."""
@@ -84,56 +205,6 @@ class ColoredPlainTextEdit(PlainTextEdit):
         return "INFO"
 
 
-class OrganizeWorker(QThread):
-    """Background worker for file organization with progress updates."""
-    
-    progress = pyqtSignal(int, int)  # current, total
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-    
-    def __init__(self, organizer: FileOrganizer, source: Path, dest: Path, categories: list):
-        """Initialize worker with organization parameters."""
-        super().__init__()
-        self.organizer = organizer
-        self.source = source
-        self.dest = dest
-        self.categories = categories
-    
-    def run(self):
-        """Run organization in background thread."""
-        try:
-            # Get file count first
-            files = self.organizer.file_manager.get_files_in_folder(self.source)
-            total_files = len(files)
-            
-            # Track progress
-            self._setup_progress_tracking(total_files)
-            
-            # Perform organization
-            stats = self.organizer.organize_folder(
-                self.source,
-                self.dest,
-                self.categories
-            )
-            
-            self.finished.emit(stats)
-            
-        except Exception as e:
-            self.error.emit(str(e))
-    
-    def _setup_progress_tracking(self, total_files: int):
-        """Setup progress tracking by subscribing to logger."""
-        self.current = 0
-        self.total = total_files
-        
-        def track_progress(message: str):
-            if "✓" in message or "→" in message:
-                self.current += 1
-                self.progress.emit(self.current, self.total)
-        
-        self.organizer.logger.subscribe(track_progress)
-
-
 class OrganizePage:
     """File organization page with source/dest/category inputs and live log."""
     
@@ -167,7 +238,6 @@ class OrganizePage:
         layout.addWidget(self._create_source_card())
         layout.addWidget(self._create_dest_card())
         layout.addWidget(self._create_category_card())
-        layout.addWidget(self._create_progress_card())
         layout.addWidget(self._create_log_card())
         layout.addLayout(self._create_button_layout())
         layout.addStretch()
@@ -177,17 +247,25 @@ class OrganizePage:
         return scroll
 
     def _create_source_card(self) -> CardWidget:
-        """Create source folder selection card"""
+        """Create source folder selection card with drag-drop support"""
         card = CardWidget()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        layout.addWidget(BodyLabel("Source Folder"))
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(BodyLabel("Source Folder"))
+        
+        hint_label = BodyLabel("📁 Drag & drop supported")
+        hint_label.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: 500;")
+        label_layout.addStretch()
+        label_layout.addWidget(hint_label)
+        layout.addLayout(label_layout)
 
         input_layout = QHBoxLayout()
-        self.source_input = LineEdit()
-        self.source_input.setPlaceholderText("Select source folder...")
+        self.source_input = DragDropLineEdit()
+        self.source_input.setObjectName("source_input")
+        self.source_input.setPlaceholderText("Select or drag source folder...")
         input_layout.addWidget(self.source_input, 1)
 
         browse_btn = PushButton("Browse")
@@ -199,17 +277,25 @@ class OrganizePage:
         return card
 
     def _create_dest_card(self) -> CardWidget:
-        """Create destination folder selection card"""
+        """Create destination folder selection card with drag-drop support"""
         card = CardWidget()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        layout.addWidget(BodyLabel("Destination Folder"))
+        label_layout = QHBoxLayout()
+        label_layout.addWidget(BodyLabel("Destination Folder"))
+        
+        hint_label = BodyLabel("📁 Drag & drop supported")
+        hint_label.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: 500;")
+        label_layout.addStretch()
+        label_layout.addWidget(hint_label)
+        layout.addLayout(label_layout)
 
         input_layout = QHBoxLayout()
-        self.dest_input = LineEdit()
-        self.dest_input.setPlaceholderText("Select destination folder...")
+        self.dest_input = DragDropLineEdit()
+        self.dest_input.setObjectName("dest_input")
+        self.dest_input.setPlaceholderText("Select or drag destination folder...")
         input_layout.addWidget(self.dest_input, 1)
 
         browse_btn = PushButton("Browse")
@@ -241,28 +327,6 @@ class OrganizePage:
 
         check_layout.addStretch()
         layout.addLayout(check_layout)
-        return card
-
-    def _create_progress_card(self) -> CardWidget:
-        """Create progress bar card"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        label_layout = QHBoxLayout()
-        label_layout.addWidget(BodyLabel("Progress"))
-        self.progress_label = BodyLabel("Ready")
-        label_layout.addStretch()
-        label_layout.addWidget(self.progress_label)
-        layout.addLayout(label_layout)
-
-        self.progress_bar = ProgressBar()
-        self.progress_bar.setMinimumHeight(8)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
         return card
 
     def _create_log_card(self) -> CardWidget:
@@ -312,25 +376,6 @@ class OrganizePage:
         """Enable or disable organize and undo buttons during processing"""
         if hasattr(self, 'organize_btn'):
             self.organize_btn.setEnabled(enabled)
-        if hasattr(self, 'undo_btn') and enabled:
-            # Only enable if there's something to undo
-            pass
-        elif hasattr(self, 'undo_btn'):
-            self.undo_btn.setEnabled(False)
-
-    def update_progress(self, current: int, total: int) -> None:
-        """Update progress bar and label"""
-        if total > 0:
-            percentage = int((current / total) * 100)
-            self.progress_bar.setValue(percentage)
-            self.progress_label.setText(f"{current}/{total} files")
-
-    def show_progress(self, show: bool) -> None:
-        """Show or hide progress bar"""
-        self.progress_bar.setVisible(show)
-        if not show:
-            self.progress_bar.setValue(0)
-            self.progress_label.setText("Ready")
 
     def get_source(self) -> str:
         """Get source folder path"""
@@ -460,7 +505,7 @@ ABOUT_MARKDOWN = """
 - **Modern UI** — Windows 11 Fluent Design
 - **Persistent Settings** — Remember your preferences
 - **Undo/Redo** — Rollback operations safely
-- **Progress Tracking** — Real-time progress bar
+- **Drag & Drop** — Enhanced folder input with visual feedback
 
 ### Architecture
 
@@ -501,7 +546,6 @@ class FileOrganizerWindow(QMainWindow):
         self.organizer = file_organizer
         self.config = config
         self.logger = logger
-        self.worker = None
 
         setTheme(Theme.DARK)
         self._setup_ui()
@@ -567,7 +611,7 @@ class FileOrganizerWindow(QMainWindow):
         self.move(x, y)
 
     def _handle_organize(self) -> None:
-        """Handle organize action with validation and background processing"""
+        """Handle organize action with validation"""
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
@@ -582,51 +626,28 @@ class FileOrganizerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Select at least one category")
             return
 
-        # Disable buttons during processing
-        self.organize_page_obj.set_buttons_enabled(False)
-        self.organize_page_obj.show_progress(True)
-
-        # Create and start worker thread
-        self.worker = OrganizeWorker(
-            self.organizer,
-            Path(source),
-            Path(destination),
-            categories
-        )
-        
-        self.worker.progress.connect(self._on_progress)
-        self.worker.finished.connect(self._on_organize_finished)
-        self.worker.error.connect(self._on_organize_error)
-        self.worker.start()
-
-    def _on_progress(self, current: int, total: int) -> None:
-        """Handle progress updates"""
-        self.organize_page_obj.update_progress(current, total)
-
-    def _on_organize_finished(self, stats: dict) -> None:
-        """Handle organization completion"""
-        self.organize_page_obj.show_progress(False)
-        self.organize_page_obj.set_buttons_enabled(True)
-        
-        # Enable undo button
-        self.organize_page_obj.set_undo_enabled(
-            self.organizer.history.can_undo()
-        )
-        
-        QMessageBox.information(
-            self, "Success",
-            f"Organization Complete!\n\nMoved: {stats['moved']}\n"
-            f"Errors: {stats['errors']}\nSkipped: {stats['skipped']}"
-        )
-        
-        self.worker = None
-
-    def _on_organize_error(self, error: str) -> None:
-        """Handle organization error"""
-        self.organize_page_obj.show_progress(False)
-        self.organize_page_obj.set_buttons_enabled(True)
-        QMessageBox.critical(self, "Error", f"Organization failed: {error}")
-        self.worker = None
+        try:
+            self.organize_page_obj.set_buttons_enabled(False)
+            
+            stats = self.organizer.organize_folder(
+                Path(source),
+                Path(destination),
+                categories
+            )
+            
+            self.organize_page_obj.set_undo_enabled(
+                self.organizer.history.can_undo()
+            )
+            
+            QMessageBox.information(
+                self, "Success",
+                f"Organization Complete!\n\nMoved: {stats['moved']}\n"
+                f"Errors: {stats['errors']}\nSkipped: {stats['skipped']}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Organization failed: {str(e)}")
+        finally:
+            self.organize_page_obj.set_buttons_enabled(True)
 
     def _handle_undo(self) -> None:
         """Handle undo action with confirmation"""
