@@ -1,4 +1,3 @@
-"""File categorization utilities separated from file operations."""
 from pathlib import Path
 from typing import Dict, List
 from app.core.constants import FileCategory, FILE_EXTENSIONS
