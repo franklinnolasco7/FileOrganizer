@@ -1,4 +1,4 @@
-"""Main application window with organize, framework, guide, and about pages."""
+"""Main application window with organize, changelogs, settings, and about pages."""
 import sys
 from pathlib import Path
 from PyQt6.QtWidgets import (
@@ -297,6 +297,175 @@ class PreviewDialog(QDialog):
         return table
 
 
+class SettingsPage:
+    """Settings panel for persisting user preferences and options."""
+    
+    def __init__(self, config: ConfigManager, on_close) -> None:
+        """Initialize settings page with config manager and close callback."""
+        self.config = config
+        self.on_close = on_close
+    
+    def create(self) -> QWidget:
+        """Create settings page widget."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(16)
+        
+        layout.addWidget(TitleLabel("Settings"))
+        
+        # Persistent Paths Card
+        layout.addWidget(self._create_persistent_paths_card())
+        
+        layout.addStretch()
+        
+        scroll.setWidget(widget)
+        return scroll
+    
+    def _create_persistent_paths_card(self) -> CardWidget:
+        """Create card for persistent folder path settings."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(12)
+        
+        card_layout.addWidget(BodyLabel("Persistent Paths"))
+        
+        # Last Source Folder
+        src_layout = QHBoxLayout()
+        src_label = BodyLabel("Last Source Folder")
+        self.src_input = LineEdit()
+        self.src_input.setPlaceholderText("Enter last used source path")
+        self.src_input.setText(self.config.get("last_source_folder", ""))
+        src_layout.addWidget(src_label)
+        src_layout.addWidget(self.src_input, 1)
+        card_layout.addLayout(src_layout)
+        
+        # Last Destination Folder
+        dst_layout = QHBoxLayout()
+        dst_label = BodyLabel("Last Destination Folder")
+        self.dst_input = LineEdit()
+        self.dst_input.setPlaceholderText("Enter last used destination path")
+        self.dst_input.setText(self.config.get("last_destination_folder", ""))
+        dst_layout.addWidget(dst_label)
+        dst_layout.addWidget(self.dst_input, 1)
+        card_layout.addLayout(dst_layout)
+        
+        # Auto-save toggle
+        self.auto_save_cb = CheckBox("Auto-save on change (auto-fill paths on startup)")
+        self.auto_save_cb.setChecked(self.config.get("auto_save_paths", True))
+        card_layout.addWidget(self.auto_save_cb)
+        
+        # Action buttons
+        btn_layout = QHBoxLayout()
+        save_btn = PushButton("Save")
+        save_btn.setMinimumWidth(100)
+        save_btn.clicked.connect(self._save_persistent_paths)
+        btn_layout.addWidget(save_btn)
+        
+        close_btn = PushButton("Close")
+        close_btn.setMinimumWidth(100)
+        close_btn.clicked.connect(self.on_close)
+        btn_layout.addWidget(close_btn)
+        
+        btn_layout.addStretch()
+        card_layout.addLayout(btn_layout)
+        
+        return card
+    
+    def _save_persistent_paths(self) -> None:
+        """Save persistent folder paths to config."""
+        src = (self.src_input.text() or "").strip()
+        dst = (self.dst_input.text() or "").strip()
+        auto_save = self.auto_save_cb.isChecked()
+        
+        self.config.set("last_source_folder", src)
+        self.config.set("last_destination_folder", dst)
+        self.config.set("auto_save_paths", auto_save)
+        
+        QMessageBox.information(None, "Saved", "Settings saved successfully!")
+
+
+class ChangelogsPage:
+    """Changelogs page showing version history and updates."""
+    
+    def __init__(self) -> None:
+        """Initialize changelogs page."""
+        pass
+    
+    def create(self) -> QWidget:
+        """Create changelogs page widget."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(16)
+        
+        layout.addWidget(TitleLabel("Changelogs"))
+        
+        # Version 2.2.0
+        layout.addWidget(self._create_version_card("2.2.0", "November 2025", [
+            "Added Settings tab with persistent folder paths",
+            "Added About & Changelogs pages",
+            "Auto-save feature for last used folders",
+        ]))
+        
+        # Version 2.1.0
+        layout.addWidget(self._create_version_card("2.1.0", "November 2025", [
+            "Added file preview before organizing",
+            "Added undo feature",
+            "Color-coded activity log",
+            "Drag & drop for folders",
+        ]))
+        
+        # Version 2.0.0
+        layout.addWidget(self._create_version_card("2.0.0", "November 2025", [
+            "Complete UI redesign with dark theme",
+            "Multi-tab interface",
+            "File organization by category",
+        ]))
+        
+        # Version 1.0.0
+        layout.addWidget(self._create_version_card("1.0.0", "November 2025", [
+            "Initial release",
+        ]))
+        
+        layout.addStretch()
+        
+        scroll.setWidget(widget)
+        return scroll
+    
+    def _create_version_card(self, version: str, date: str, changes: list) -> CardWidget:
+        """Create version card with changelog."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(12)
+        
+        # Version header
+        version_layout = QHBoxLayout()
+        version_label = TitleLabel(f"v{version}")
+        date_label = BodyLabel(date)
+        date_label.setStyleSheet("color: #999999; font-size: 11px;")
+        version_layout.addWidget(version_label)
+        version_layout.addStretch()
+        version_layout.addWidget(date_label)
+        card_layout.addLayout(version_layout)
+        
+        # Changes list
+        for change in changes:
+            card_layout.addWidget(BodyLabel(f"• {change}"))
+        
+        return card
+
+
 class OrganizePage:
     """File organization page with source/dest/category inputs and live log."""
     
@@ -438,7 +607,7 @@ class OrganizePage:
         return card
 
     def _create_button_layout(self) -> QHBoxLayout:
-        """Create action button layout with Preview and Undo buttons"""
+        """Create action button layout"""
         layout = QHBoxLayout()
         layout.setSpacing(8)
 
@@ -501,138 +670,135 @@ class OrganizePage:
         self.log_text.clear()
 
 
-class InfoPageWithMarkdown:
-    """Scrollable page with markdown content rendering."""
+class AboutPage:
+    """About & Credits page."""
     
-    def __init__(self, title: str, markdown_content: str) -> None:
-        """Initialize info page."""
-        self.title = title
-        self.markdown_content = markdown_content
-
+    def __init__(self) -> None:
+        """Initialize about page."""
+        pass
+    
     def create(self) -> QWidget:
-        """Create info page widget with markdown rendering"""
+        """Create about page widget."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-
+        
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(32, 24, 32, 24)
         layout.setSpacing(16)
-
-        layout.addWidget(TitleLabel(self.title))
-
+        
+        layout.addWidget(TitleLabel("About"))
+        
+        # App Info Card
+        layout.addWidget(self._create_app_info_card())
+        
+        # Credits Card
+        layout.addWidget(self._create_credits_card())
+        
+        layout.addStretch()
+        
+        scroll.setWidget(widget)
+        return scroll
+    
+    def _create_app_info_card(self) -> CardWidget:
+        """Create app information card."""
         card = CardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
-
-        text_browser = QTextBrowser()
-        text_browser.setMarkdown(self.markdown_content)
-        text_browser.setReadOnly(True)
-        text_browser.setOpenExternalLinks(True)
-        text_browser.document().setDocumentMargin(8)
-        card_layout.addWidget(text_browser, 1)
-        layout.addWidget(card, 1)
-
-        scroll.setWidget(widget)
-        return scroll
-
-
-FRAMEWORK_MARKDOWN = """
-# Jeff Su's Framework
-
-## Folder Structure
-
-- **01_Personal** — Personal files & hobbies
-- **02_Work** — Work-related files
-- **03_Templates** — Reusable templates
-- **04_Temp_Share** — Temporary/shared files
-- **05_Archive** — Old/archived files
-
-## Principles
-
-- Organize by **WHERE YOU USE** it (not where you found it)
-- Keep files **searchable & descriptive**
-- Limit folder depth to **5 levels**
-- Use **consistent naming conventions**
-- Archive outdated files **quarterly**
-
-## CLI Compatible
-
-- Works with PowerShell/bash tab completion
-- No brackets in folder names
-"""
-
-GUIDE_MARKDOWN = """
-# Smart File Naming
-
-## Date-Based Naming
-*For time-sensitive files*
-
-- **2025_Budget** — Year only
-- **2025-Q1_Analysis** — Year + Quarter
-- **2025-05-15_Report_v1** — Full date format
-
-**Best for:** Reports, meetings, invoices, receipts
-
-## Alphabetical Naming
-*For reference files*
-
-- **ProjectName_Meeting_Notes** — Consistent keywords
-- **Template_Invoice_2025** — Clear purpose
-- **Guide_Setup_Instructions** — Self-documenting
-
-**Best for:** Templates, guides, recurring documents, reference materials
-
-## CLI Compatibility
-
-**✓ GOOD** — `01_Personal` works with tab completion
-
-**✗ BAD** — `[01] Personal` breaks PowerShell completion
-
-**◐ OKAY** — `Personal_01` alternative format
-
-**Recommendation:** Always use `01_Personal` format
-"""
-
-ABOUT_MARKDOWN = """
-# File Organizer Pro
-
-## Version 2.1.0
-
-### Features
-
-- **Automatic Organization** — Sort files by category
-- **Preview Mode** — See what will be organized before committing
-- **Jeff Su Framework** — Professional folder structure
-- **Real-time Logging** — Live activity feedback
-- **Modern UI** — Windows 11 Fluent Design
-- **Persistent Settings** — Remember your preferences
-- **Undo/Redo** — Rollback operations safely
-- **Drag & Drop** — Enhanced folder input with visual feedback
-
-### Architecture
-
-- **Object-Oriented Design** (OOP)
-- **SOLID Principles** — Clean code standards
-- **Design Patterns** — Proven solutions
-- **Type Hints** — Full static typing
-- **Error Handling** — Comprehensive exception management
-
-### Tech Stack
-
-- **PyQt6** — Modern GUI framework
-- **qfluentwidgets** — Fluent UI components
-- **Python 3.9+** — Latest language features
-
-### Status
-
-✓ **Production-Ready**
-
-Built with care for professional file management.
-
-*Year: 2025*
-"""
+        card_layout.setSpacing(12)
+        
+        # Title
+        card_layout.addWidget(TitleLabel("File Organizer"))
+        
+        # Version
+        version_layout = QHBoxLayout()
+        version_label = BodyLabel("Version:")
+        version_label.setStyleSheet("font-weight: 500;")
+        version_value = BodyLabel("2.2.0")
+        version_layout.addWidget(version_label)
+        version_layout.addWidget(version_value)
+        version_layout.addStretch()
+        card_layout.addLayout(version_layout)
+        
+        # Release Date
+        date_layout = QHBoxLayout()
+        date_label = BodyLabel("Release Date:")
+        date_label.setStyleSheet("font-weight: 500;")
+        date_value = BodyLabel("November 2025")
+        date_layout.addWidget(date_label)
+        date_layout.addWidget(date_value)
+        date_layout.addStretch()
+        card_layout.addLayout(date_layout)
+        
+        # Description
+        description = BodyLabel("An open source project for organizing files by category. Helps you keep your files organized and easy to find.")
+        description.setWordWrap(True)
+        card_layout.addWidget(description)
+        
+        # GitHub Link
+        github_layout = QHBoxLayout()
+        github_label = BodyLabel("Repository:")
+        github_label.setStyleSheet("font-weight: 500;")
+        github_link = BodyLabel("https://github.com/franklinnolasco7/FileOrganizer")
+        github_link.setStyleSheet("color: #0078D4; text-decoration: underline;")
+        github_layout.addWidget(github_label)
+        github_layout.addWidget(github_link)
+        github_layout.addStretch()
+        card_layout.addLayout(github_layout)
+        
+        return card
+    
+    def _create_credits_card(self) -> CardWidget:
+        """Create credits card."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(12)
+        
+        card_layout.addWidget(TitleLabel("Credits"))
+        
+        # Developer
+        dev_layout = QHBoxLayout()
+        dev_label = BodyLabel("Developer:")
+        dev_label.setStyleSheet("font-weight: 500;")
+        dev_name = BodyLabel("Franklin Nolasco")
+        dev_layout.addWidget(dev_label)
+        dev_layout.addWidget(dev_name)
+        dev_layout.addStretch()
+        card_layout.addLayout(dev_layout)
+        
+        # Framework
+        framework_layout = QHBoxLayout()
+        framework_label = BodyLabel("Framework:")
+        framework_label.setStyleSheet("font-weight: 500;")
+        framework_value = BodyLabel("PyQt6")
+        framework_layout.addWidget(framework_label)
+        framework_layout.addWidget(framework_value)
+        framework_layout.addStretch()
+        card_layout.addLayout(framework_layout)
+        
+        # UI Theme
+        theme_layout = QHBoxLayout()
+        theme_label = BodyLabel("UI Theme:")
+        theme_label.setStyleSheet("font-weight: 500;")
+        theme_value = BodyLabel("qfluentwidgets")
+        theme_layout.addWidget(theme_label)
+        theme_layout.addWidget(theme_value)
+        theme_layout.addStretch()
+        card_layout.addLayout(theme_layout)
+        
+        # Type
+        type_layout = QHBoxLayout()
+        type_label = BodyLabel("Type:")
+        type_label.setStyleSheet("font-weight: 500;")
+        type_value = BodyLabel("Open Source")
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(type_value)
+        type_layout.addStretch()
+        card_layout.addLayout(type_layout)
+        
+        return card
 
 
 class FileOrganizerWindow(QMainWindow):
@@ -656,7 +822,7 @@ class FileOrganizerWindow(QMainWindow):
 
     def _setup_ui(self) -> None:
         """Setup main UI structure"""
-        self.setWindowTitle("File Organizer Pro")
+        self.setWindowTitle("File Organizer")
         self.resize(1100, 700)
         self._center_window()
 
@@ -666,6 +832,7 @@ class FileOrganizerWindow(QMainWindow):
         self.nav.setCollapsible(True)
         self.nav.setExpandWidth(250)
 
+        # Create Organize Page
         self.organize_page_obj = OrganizePage(
             on_organize=self._handle_organize,
             on_browse_source=self._browse_source,
@@ -676,26 +843,36 @@ class FileOrganizerWindow(QMainWindow):
         )
         self.organize_page = self.organize_page_obj.create()
 
-        framework_page = InfoPageWithMarkdown("Jeff Su's Framework", FRAMEWORK_MARKDOWN).create()
-        guide_page = InfoPageWithMarkdown("Smart File Naming", GUIDE_MARKDOWN).create()
-        about_page = InfoPageWithMarkdown("About File Organizer Pro", ABOUT_MARKDOWN).create()
+        # Create Changelogs Page
+        changelogs_page = ChangelogsPage().create()
 
-        self.stacked_widget.addWidget(self.organize_page)
+        # Create Settings Page
+        self.settings_page_obj = SettingsPage(self.config, on_close=self._return_to_organize)
+        self.settings_page = self.settings_page_obj.create()
+
+        # Create About Page
+        about_page = AboutPage().create()
+
+        # Add all pages to stack widget
+        self.stacked_widget.addWidget(self.organize_page)  # Index 0
+        self.stacked_widget.addWidget(changelogs_page)  # Index 1
+        self.stacked_widget.addWidget(self.settings_page)  # Index 2
+        self.stacked_widget.addWidget(about_page)  # Index 3
+
+        # Add navigation items
         self.nav.addItem(routeKey="organize", icon=FIF.FOLDER, text="Organize",
                         onClick=lambda: self.stacked_widget.setCurrentIndex(0))
 
-        self.stacked_widget.addWidget(framework_page)
-        self.nav.addItem(routeKey="framework", icon=FIF.CHECKBOX, text="Framework",
+        self.nav.addItem(routeKey="changelogs", icon=FIF.HISTORY, text="Changelogs",
                         onClick=lambda: self.stacked_widget.setCurrentIndex(1))
 
-        self.stacked_widget.addWidget(guide_page)
-        self.nav.addItem(routeKey="guide", icon=FIF.INFO, text="Guide",
+        self.nav.addItem(routeKey="settings", icon=FIF.SETTING, text="Settings",
                         onClick=lambda: self.stacked_widget.setCurrentIndex(2))
 
-        self.stacked_widget.addWidget(about_page)
-        self.nav.addItem(routeKey="about", icon=FIF.SETTING, text="About",
+        self.nav.addItem(routeKey="about", icon=FIF.INFO, text="About",
                         onClick=lambda: self.stacked_widget.setCurrentIndex(3))
 
+        # Setup main layout
         main_widget = QWidget()
         layout = QHBoxLayout(main_widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -704,8 +881,13 @@ class FileOrganizerWindow(QMainWindow):
         layout.addWidget(self.stacked_widget, 1)
         self.setCentralWidget(main_widget)
 
+        # Set initial page
         self.stacked_widget.setCurrentWidget(self.organize_page)
 
+        # Load saved settings on startup
+        self._apply_saved_settings()
+
+        # Subscribe to logger
         self.logger.subscribe(self._on_log_message)
 
     def _center_window(self) -> None:
@@ -714,6 +896,22 @@ class FileOrganizerWindow(QMainWindow):
         x = (geometry.width() - self.width()) // 2 + geometry.x()
         y = (geometry.height() - self.height()) // 2 + geometry.y()
         self.move(x, y)
+
+    def _apply_saved_settings(self) -> None:
+        """Load saved settings from config and apply to organize page."""
+        auto_save_enabled = self.config.get("auto_save_paths", True)
+        
+        if auto_save_enabled:
+            src = self.config.get("last_source_folder", "")
+            dst = self.config.get("last_destination_folder", "")
+            if src:
+                self.organize_page_obj.source_input.setText(src)
+            if dst:
+                self.organize_page_obj.dest_input.setText(dst)
+
+    def _return_to_organize(self) -> None:
+        """Return from settings to organize page."""
+        self.stacked_widget.setCurrentWidget(self.organize_page)
 
     def _handle_preview(self) -> None:
         """Show preview of files to be organized."""
@@ -742,7 +940,6 @@ class FileOrganizerWindow(QMainWindow):
                 QMessageBox.information(self, "Preview", "No files found to organize")
                 return
 
-            # Show preview dialog
             dialog = PreviewDialog(preview_data, self)
             dialog.exec()
 
@@ -777,6 +974,12 @@ class FileOrganizerWindow(QMainWindow):
             self.organize_page_obj.set_undo_enabled(
                 self.organizer.history.can_undo()
             )
+            
+            # Auto-persist the paths used for this organization if auto-save enabled
+            auto_save_enabled = self.config.get("auto_save_paths", True)
+            if auto_save_enabled:
+                self.config.set("last_source_folder", source)
+                self.config.set("last_destination_folder", destination)
             
             QMessageBox.information(
                 self, "Success",
@@ -831,7 +1034,6 @@ class FileOrganizerWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
         if folder:
             self.organize_page_obj.dest_input.setText(folder)
-            self.config.set("destination_folder", folder)
 
     def _clear_log(self) -> None:
         """Clear log"""
