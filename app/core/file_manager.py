@@ -1,4 +1,3 @@
-"""Low-level file operations with robust error handling."""
 from dataclasses import dataclass
 from enum import Enum
 import shutil

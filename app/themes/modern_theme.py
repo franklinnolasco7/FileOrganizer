@@ -1,4 +1,3 @@
-"""Professional color schemes with Dark and Light modes."""
 from enum import Enum
 from typing import Dict
 

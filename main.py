@@ -1,4 +1,3 @@
-"""Application entry point."""
 from app.ui.gui import main
 
 

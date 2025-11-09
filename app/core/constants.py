@@ -1,4 +1,3 @@
-"""Type-safe configuration for file categories and folder structure."""
 from enum import Enum
 from typing import Dict, List, Final
 

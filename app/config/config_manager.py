@@ -1,4 +1,3 @@
-"""Configuration management with validation and persistence."""
 import json
 from dataclasses import dataclass
 from pathlib import Path
