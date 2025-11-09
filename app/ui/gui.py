@@ -410,6 +410,13 @@ class ChangelogsPage:
         
         layout.addWidget(TitleLabel("Changelogs"))
         
+        # Version 2.3.0
+        layout.addWidget(self._create_version_card("2.3.0", "November 2025", [
+            "Fixed nested folder organization",
+            "Auto-cleanup empty folders after moving files",
+            "Recursive file scanning in subdirectories",
+        ]))
+
         # Version 2.2.0
         layout.addWidget(self._create_version_card("2.2.0", "November 2025", [
             "Added Settings tab with persistent folder paths",
@@ -715,7 +722,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.2.0")
+        version_value = BodyLabel("2.3.0")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()

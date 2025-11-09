@@ -8,9 +8,11 @@ from app.core.file_manager import FileManager, FileOperationError
 from app.core.operation_history import OperationHistory
 
 
+
 class OrganizationError(Exception):
     """Custom exception for organization failures"""
     pass
+
 
 
 @dataclass
@@ -20,9 +22,11 @@ class OrganizationStats:
     skipped: int = 0
     errors: int = 0
 
+
     def to_dict(self) -> Dict[str, int]:
         """Convert to dictionary for legacy compatibility"""
         return {"moved": self.moved, "skipped": self.skipped, "errors": self.errors}
+
 
 
 class FileOrganizer:
@@ -44,6 +48,7 @@ class FileOrganizer:
         self.history = OperationHistory()
         self._created_folders: Set[Path] = set()
 
+
     def preview_organization(
         self,
         source_path: Path,
@@ -64,7 +69,7 @@ class FileOrganizer:
         validated_dest = self._validate_destination_path(destination_path)
         categories = self._validate_categories(active_categories)
         
-        files = self.file_manager.get_files_in_folder(validated_source)
+        files = self.file_manager.get_files_in_folder(validated_source, recursive=True)
         
         preview_data = {
             'total': 0,
@@ -92,13 +97,17 @@ class FileOrganizer:
         
         return preview_data
 
+
     def organize_folder(
         self,
         source_path: Path,
         destination_path: Path,
         active_categories: List[FileCategory] | None = None,
     ) -> Dict[str, int]:
-        """Organize files from source to destination by category."""
+        """Organize files from source to destination by category.
+        
+        Now recursively scans nested folders and removes empty dirs after moving.
+        """
         try:
             self.history.start_batch()
             self._created_folders.clear()
@@ -107,6 +116,7 @@ class FileOrganizer:
             validated_dest = self._validate_destination_path(destination_path)
             categories = self._validate_categories(active_categories)
 
+
             self.logger.separator()
             self.logger.info("Starting file organization")
             self.logger.info(f"Source: {validated_source}")
@@ -114,17 +124,29 @@ class FileOrganizer:
             self.logger.info(f"Categories: {len(categories)} active")
             self.logger.separator()
 
-            files = self.file_manager.get_files_in_folder(validated_source)
+
+            # Now scans nested folders recursively
+            files = self.file_manager.get_files_in_folder(validated_source, recursive=True)
             if not files:
                 self.logger.warning("No files found in source folder")
                 return OrganizationStats().to_dict()
 
+
             self.logger.info(f"Found {len(files)} files to organize")
+
 
             stats = self._process_files(files, validated_dest, categories)
 
+
+            # Clean up empty folders after moving all files
+            folders_removed = self.file_manager.cleanup_empty_folders(validated_source)
+            if folders_removed > 0:
+                self.logger.info(f"Removed {folders_removed} empty folders")
+
+
             self._log_completion_stats(stats)
             return stats.to_dict()
+
 
         except FileOperationError as e:
             self.logger.error(f"File operation failed: {str(e)}")
@@ -133,6 +155,7 @@ class FileOrganizer:
             self.logger.error(f"Organization failed: {str(e)}")
             raise OrganizationError(f"Failed to organize files: {str(e)}") from e
 
+
     def _validate_source_path(self, source_path: Path) -> Path:
         """Validate source path exists and is a directory."""
         if not source_path:
@@ -140,12 +163,15 @@ class FileOrganizer:
         if not isinstance(source_path, Path):
             source_path = Path(source_path)
 
+
         if not source_path.exists():
             raise OrganizationError(f"Source folder not found: {source_path}")
         if not source_path.is_dir():
             raise OrganizationError(f"Source is not a directory: {source_path}")
 
+
         return source_path.resolve()
+
 
     def _validate_destination_path(self, dest_path: Path) -> Path:
         """Validate destination path; create if doesn't exist."""
@@ -153,6 +179,7 @@ class FileOrganizer:
             raise OrganizationError("Destination path is required")
         if not isinstance(dest_path, Path):
             dest_path = Path(dest_path)
+
 
         if not dest_path.exists():
             try:
@@ -162,10 +189,13 @@ class FileOrganizer:
             except OSError as e:
                 raise OrganizationError(f"Cannot create destination: {str(e)}")
 
+
         if not dest_path.is_dir():
             raise OrganizationError(f"Destination exists but is not a directory: {dest_path}")
 
+
         return dest_path.resolve()
+
 
     def _validate_categories(
         self,
@@ -175,16 +205,20 @@ class FileOrganizer:
         if categories is None:
             return [cat for cat in FileCategory if cat.name != "OTHERS"]
 
+
         if not isinstance(categories, list):
             raise OrganizationError("Categories must be a list")
         if len(categories) == 0:
             raise OrganizationError("At least one category required")
 
+
         for cat in categories:
             if not isinstance(cat, FileCategory):
                 raise OrganizationError(f"Invalid category: {cat}")
 
+
         return categories
+
 
     def _process_files(
         self,
@@ -195,6 +229,7 @@ class FileOrganizer:
         """Process each file and accumulate statistics."""
         stats = OrganizationStats()
 
+
         for file_path in files:
             try:
                 result = self._organize_file(file_path, destination_path, categories)
@@ -203,11 +238,14 @@ class FileOrganizer:
                 elif result == "skipped":
                     stats.skipped += 1
 
+
             except Exception as e:
                 self.logger.error(f"Failed to organize {file_path.name}: {str(e)}")
                 stats.errors += 1
 
+
         return stats
+
 
     def _organize_file(
         self,
@@ -218,9 +256,11 @@ class FileOrganizer:
         """Move single file to its category folder."""
         category = self.file_service.get_file_category(file_path)
 
+
         if category not in active_categories and category != FileCategory.OTHERS:
             self.logger.debug(f"⊘ {file_path.name} (category inactive)")
             return "skipped"
+
 
         category_folder = destination_path / category.value
         
@@ -228,6 +268,7 @@ class FileOrganizer:
         category_folder.mkdir(exist_ok=True, parents=True)
         if not folder_existed:
             self._created_folders.add(category_folder)
+
 
         destination_file = category_folder / file_path.name
         result = self.file_manager.move_file(source=file_path, destination=destination_file)
@@ -243,6 +284,7 @@ class FileOrganizer:
             return "moved"
         else:
             raise FileOperationError(f"Failed to move {file_path.name}: {result.error}")
+
 
     def undo_last_operation(self) -> Dict[str, int]:
         """Undo the last organize operation and clean up empty folders."""
@@ -300,6 +342,7 @@ class FileOrganizer:
         
         return stats
 
+
     @staticmethod
     def _is_empty_directory(path: Path) -> bool:
         """Check if directory is empty."""
@@ -307,6 +350,7 @@ class FileOrganizer:
             return path.is_dir() and not any(path.iterdir())
         except Exception:
             return False
+
 
     def create_jeff_su_framework(
         self,
@@ -318,11 +362,13 @@ class FileOrganizer:
             self.logger.separator()
             self.logger.info("Creating Jeff Su Framework...")
 
+
             folder_names = list(JEFF_SU_STRUCTURE.keys())
             result = self.file_manager.create_folders(destination_path, folder_names)
             
             if not result.success:
                 raise FileOperationError(f"Failed to create folders: {result.error}")
+
 
             for folder_name, info in JEFF_SU_STRUCTURE.items():
                 folder_path = destination_path / folder_name
@@ -334,13 +380,16 @@ class FileOrganizer:
                 else:
                     self.logger.warning(f"⚠ {folder_name}/ (README creation failed)")
 
+
             self.logger.success("Framework created successfully!")
             self.logger.separator()
             return True
 
+
         except Exception as e:
             self.logger.error(f"Failed to create framework: {str(e)}")
             return False
+
 
     @staticmethod
     def _generate_readme(folder_name: str, info: Dict[str, str]) -> str:
@@ -349,13 +398,16 @@ class FileOrganizer:
 ═══════════════════════════════════════════════════
 
 
+
 Folder: {folder_name}
 Description: {info['description']}
 Keywords: {info['keywords']}
 
 
+
 This folder is part of Jeff Su's File Management Framework.
 Windows CLI Compatible (no brackets [ ])
+
 
 
 PRINCIPLES:
@@ -367,8 +419,10 @@ PRINCIPLES:
 • Archive quarterly
 
 
+
 ═══════════════════════════════════════════════════
 """
+
 
     def _log_completion_stats(self, stats: OrganizationStats) -> None:
         """Log final organization statistics."""
