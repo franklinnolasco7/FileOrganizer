@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Dict, List, Final
 
 
+
 class FileCategory(Enum):
     """File categories enumeration - used for organization."""
     IMAGES = "Images"
@@ -13,10 +14,12 @@ class FileCategory(Enum):
     CODE = "Code"
     OTHERS = "Others"
 
+
     @property
     def folder_name(self) -> str:
         """Get human-readable folder name."""
         return self.value
+
 
 
 class JeffSuFolders(Enum):
@@ -30,10 +33,12 @@ class JeffSuFolders(Enum):
     TEMP_SHARE = "04_Temp_Share"
     ARCHIVE = "05_Archive"
 
+
     @property
     def folder_path(self) -> str:
         """Get folder path string."""
         return self.value
+
 
 
 # Maps extensions to categories for automated sorting
@@ -63,6 +68,42 @@ FILE_EXTENSIONS: Final[Dict[FileCategory, List[str]]] = {
     ],
 }
 
+
+# Custom categories storage (loaded from config at runtime)
+CUSTOM_CATEGORIES: Dict[str, List[str]] = {}
+
+
+def add_custom_category(name: str, extensions: List[str]) -> None:
+    """Add or update a custom category.
+    
+    Args:
+        name: Category name
+        extensions: List of file extensions (without dots, e.g., ["pdf", "docx"])
+    """
+    CUSTOM_CATEGORIES[name] = [ext.lower().lstrip('.') for ext in extensions]
+
+
+def remove_custom_category(name: str) -> None:
+    """Remove a custom category.
+    
+    Args:
+        name: Category name to remove
+    """
+    if name in CUSTOM_CATEGORIES:
+        del CUSTOM_CATEGORIES[name]
+
+
+def get_all_categories() -> Dict[str, List[str]]:
+    """Get all categories (default + custom).
+    
+    Returns:
+        Dictionary mapping category names to extension lists
+    """
+    all_categories = {cat.value: exts for cat, exts in FILE_EXTENSIONS.items()}
+    all_categories.update(CUSTOM_CATEGORIES)
+    return all_categories
+
+
 # Keywords will power AI categorization when added; descriptions show up in UI
 JEFF_SU_STRUCTURE: Final[Dict[str, Dict[str, str]]] = {
     JeffSuFolders.PERSONAL.value: {
@@ -87,10 +128,12 @@ JEFF_SU_STRUCTURE: Final[Dict[str, Dict[str, str]]] = {
     },
 }
 
+
 # Application metadata
-APP_NAME: Final[str] = "File Organizer Pro"
-APP_VERSION: Final[str] = "2.0.0"
-APP_DESCRIPTION: Final[str] = "Professional file organization with Jeff Su Framework"
+APP_NAME: Final[str] = "File Organizer"
+APP_VERSION: Final[str] = "2.4.0"
+APP_DESCRIPTION: Final[str] = "Open source file organization tool"
+
 
 # Configuration file location
 CONFIG_FILENAME: Final[str] = ".file_organizer_config.json"

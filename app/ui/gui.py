@@ -4,7 +4,8 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
-    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView
+    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QListWidget,
+    QInputDialog
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent
@@ -16,7 +17,7 @@ from qfluentwidgets import (
 from qfluentwidgets import FluentIcon as FIF
 
 from app.core.file_organizer import FileOrganizer
-from app.core.constants import FileCategory
+from app.core.constants import FileCategory, CUSTOM_CATEGORIES
 from app.config.config_manager import ConfigManager
 from app.services.logger_service import LoggerService
 
@@ -104,7 +105,7 @@ class DragDropLineEdit(LineEdit):
         self.setStyleSheet(self._default_style)
         self._reset_placeholder()
     
-    def dropEvent(self, event: QDropEvent) -> None:
+    def dropEvent(self, event) -> None:
         """Handle drop with validation and feedback."""
         self._is_dragging = False
         self.setStyleSheet(self._default_style)
@@ -298,7 +299,7 @@ class PreviewDialog(QDialog):
 
 
 class SettingsPage:
-    """Settings panel for persisting user preferences and options."""
+    """Settings panel for persisting user preferences and options including custom categories."""
     
     def __init__(self, config: ConfigManager, on_close) -> None:
         """Initialize settings page with config manager and close callback."""
@@ -306,7 +307,7 @@ class SettingsPage:
         self.on_close = on_close
     
     def create(self) -> QWidget:
-        """Create settings page widget."""
+        """Create settings page widget including persistent paths and custom categories."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
@@ -318,14 +319,14 @@ class SettingsPage:
         
         layout.addWidget(TitleLabel("Settings"))
         
-        # Persistent Paths Card
         layout.addWidget(self._create_persistent_paths_card())
+        layout.addWidget(self._create_custom_categories_card())
         
         layout.addStretch()
         
         scroll.setWidget(widget)
         return scroll
-    
+
     def _create_persistent_paths_card(self) -> CardWidget:
         """Create card for persistent folder path settings."""
         card = CardWidget()
@@ -335,7 +336,6 @@ class SettingsPage:
         
         card_layout.addWidget(BodyLabel("Persistent Paths"))
         
-        # Last Source Folder
         src_layout = QHBoxLayout()
         src_label = BodyLabel("Last Source Folder")
         self.src_input = LineEdit()
@@ -345,7 +345,6 @@ class SettingsPage:
         src_layout.addWidget(self.src_input, 1)
         card_layout.addLayout(src_layout)
         
-        # Last Destination Folder
         dst_layout = QHBoxLayout()
         dst_label = BodyLabel("Last Destination Folder")
         self.dst_input = LineEdit()
@@ -355,12 +354,10 @@ class SettingsPage:
         dst_layout.addWidget(self.dst_input, 1)
         card_layout.addLayout(dst_layout)
         
-        # Auto-save toggle
         self.auto_save_cb = CheckBox("Auto-save on change (auto-fill paths on startup)")
         self.auto_save_cb.setChecked(self.config.get("auto_save_paths", True))
         card_layout.addWidget(self.auto_save_cb)
         
-        # Action buttons
         btn_layout = QHBoxLayout()
         save_btn = PushButton("Save")
         save_btn.setMinimumWidth(100)
@@ -376,7 +373,88 @@ class SettingsPage:
         card_layout.addLayout(btn_layout)
         
         return card
-    
+
+    def _create_custom_categories_card(self) -> CardWidget:
+        """Create card for managing custom file categories."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(12)
+
+        card_layout.addWidget(BodyLabel("Custom Categories"))
+
+        # List widget to show categories and their extensions
+        self.categories_list = QListWidget()
+        self._refresh_custom_categories_list()
+        card_layout.addWidget(self.categories_list, 1)
+
+        btn_layout = QHBoxLayout()
+
+        add_btn = PushButton("Add Category")
+        add_btn.setMinimumWidth(120)
+        add_btn.clicked.connect(self._add_custom_category)
+        btn_layout.addWidget(add_btn)
+
+        remove_btn = PushButton("Remove Selected")
+        remove_btn.setMinimumWidth(120)
+        remove_btn.clicked.connect(self._remove_custom_category)
+        btn_layout.addWidget(remove_btn)
+        
+        btn_layout.addStretch()
+        card_layout.addLayout(btn_layout)
+
+        return card
+
+    def _refresh_custom_categories_list(self) -> None:
+        """Refresh the list widget with current categories and extensions."""
+        self.categories_list.clear()
+        custom_cats = self.config.get_custom_categories()
+        for name, extensions in custom_cats.items():
+            exts_str = ", ".join(extensions)
+            self.categories_list.addItem(f"{name}: {exts_str}")
+
+    def _add_custom_category(self) -> None:
+        """Prompt user to add a new custom category with extensions."""
+        # Get category name
+        name, ok = QInputDialog.getText(None, "Add Custom Category", "Category Name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        # Get extensions comma-separated
+        exts, ok = QInputDialog.getText(None, "Add Extensions",
+                                       "List extensions separated by commas (e.g. pdf,docx,txt):")
+        if not ok or not exts.strip():
+            return
+        
+        extensions = [ext.strip().lstrip(".").lower() for ext in exts.split(",") if ext.strip()]
+        if not extensions:
+            QMessageBox.warning(None, "Invalid Input", "No valid extensions provided.")
+            return
+
+        # Add to config
+        self.config.add_custom_category(name, extensions)
+        self._refresh_custom_categories_list()
+
+    def _remove_custom_category(self) -> None:
+        """Remove selected custom category."""
+        selected = self.categories_list.selectedItems()
+        if not selected:
+            QMessageBox.warning(None, "Remove Category", "Select a category to remove.")
+            return
+        
+        item_text = selected[0].text()
+        # Extract category name before ":"
+        category_name = item_text.split(":", 1)[0].strip()
+        
+        reply = QMessageBox.question(None, "Confirm Removal",
+                                     f"Remove custom category '{category_name}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.config.remove_custom_category(category_name)
+            self._refresh_custom_categories_list()
+
     def _save_persistent_paths(self) -> None:
         """Save persistent folder paths to config."""
         src = (self.src_input.text() or "").strip()
@@ -410,12 +488,19 @@ class ChangelogsPage:
         
         layout.addWidget(TitleLabel("Changelogs"))
         
+        # Version 2.4.0
+        layout.addWidget(self._create_version_card("2.4.0", "November 2025", [
+            "Added custom categories support",
+            "Allows users to add and remove custom file categories"
+        ]))
+        
         # Version 2.3.0
         layout.addWidget(self._create_version_card("2.3.0", "November 2025", [
             "Fixed nested folder organization",
             "Auto-cleanup empty folders after moving files",
             "Recursive file scanning in subdirectories",
         ]))
+
 
         # Version 2.2.0
         layout.addWidget(self._create_version_card("2.2.0", "November 2025", [
@@ -722,7 +807,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.3.0")
+        version_value = BodyLabel("2.4.0")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()
@@ -806,6 +891,7 @@ class AboutPage:
         card_layout.addLayout(type_layout)
         
         return card
+
 
 
 class FileOrganizerWindow(QMainWindow):

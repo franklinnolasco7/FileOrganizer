@@ -2,6 +2,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Callable
+from app.core.constants import add_custom_category, remove_custom_category, CUSTOM_CATEGORIES
+
 
 
 class ConfigError(Exception):
@@ -9,14 +11,17 @@ class ConfigError(Exception):
     pass
 
 
+
 class ConfigValidationError(ConfigError):
     """Configuration validation failed"""
     pass
 
 
+
 class ConfigIOError(ConfigError):
     """Configuration I/O operation failed"""
     pass
+
 
 
 @dataclass
@@ -27,6 +32,7 @@ class ConfigSchema:
     default: Any
     validator: Optional[Callable[[Any], bool]] = None
     description: str = ""
+
 
     def validate(self, value: Any) -> None:
         """Validate value against schema.
@@ -44,9 +50,11 @@ class ConfigSchema:
                 f"got {type(value).__name__}"
             )
 
+
         # Custom validator
         if self.validator and not self.validator(value):
             raise ConfigValidationError(f"Validation failed for '{self.key}': {value}")
+
 
 
 class ConfigManager:
@@ -71,6 +79,8 @@ class ConfigManager:
         self._config: Dict[str, Any] = {}
         self._dirty = False
         self._load()
+        self._load_custom_categories()
+
 
     def _load(self) -> None:
         """Load configuration from file or initialize with defaults.
@@ -79,6 +89,7 @@ class ConfigManager:
             ConfigIOError: If file is corrupted and unreadable
         """
         self._config = {}
+
 
         # Load from file if exists
         if self.config_file.exists():
@@ -103,10 +114,19 @@ class ConfigManager:
             except IOError as e:
                 raise ConfigIOError(f"Cannot read config file: {str(e)}")
 
+
         # Fill missing keys with defaults
         for key, schema in self.schema.items():
             if key not in self._config:
                 self._config[key] = schema.default
+
+
+    def _load_custom_categories(self) -> None:
+        """Load custom categories from config into constants module."""
+        custom_cats = self.get("custom_categories", {})
+        for name, extensions in custom_cats.items():
+            add_custom_category(name, extensions)
+
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value safely.
@@ -119,6 +139,7 @@ class ConfigManager:
             Configuration value or default
         """
         return self._config.get(key, default)
+
 
     def set(self, key: str, value: Any, persist: bool = True) -> None:
         """Set configuration value with validation.
@@ -135,11 +156,14 @@ class ConfigManager:
         if key in self.schema:
             self.schema[key].validate(value)
 
+
         self._config[key] = value
         self._dirty = True
 
+
         if persist:
             self.save()
+
 
     def save(self) -> None:
         """Persist configuration to file.
@@ -149,6 +173,7 @@ class ConfigManager:
         """
         if not self._dirty:
             return
+
 
         try:
             # Ensure parent directory exists
@@ -164,9 +189,52 @@ class ConfigManager:
         except IOError as e:
             raise ConfigIOError(f"Cannot save config: {str(e)}")
 
+
+    def add_custom_category(self, name: str, extensions: list) -> None:
+        """Add custom category to config and runtime.
+        
+        Args:
+            name: Category name
+            extensions: List of extensions (e.g., ["pdf", "doc"])
+        """
+        if "custom_categories" not in self._config:
+            self._config["custom_categories"] = {}
+        
+        # Clean extensions (remove dots, lowercase)
+        clean_exts = [ext.lower().lstrip('.') for ext in extensions]
+        
+        self._config["custom_categories"][name] = clean_exts
+        add_custom_category(name, clean_exts)
+        self._dirty = True
+        self.save()
+
+
+    def remove_custom_category(self, name: str) -> None:
+        """Remove custom category from config and runtime.
+        
+        Args:
+            name: Category name to remove
+        """
+        if "custom_categories" in self._config and name in self._config["custom_categories"]:
+            del self._config["custom_categories"][name]
+            remove_custom_category(name)
+            self._dirty = True
+            self.save()
+
+
+    def get_custom_categories(self) -> Dict[str, list]:
+        """Get all custom categories.
+        
+        Returns:
+            Dictionary mapping category names to extension lists
+        """
+        return self._config.get("custom_categories", {})
+
+
     def get_all(self) -> Dict[str, Any]:
         """Get all configuration (immutable copy)"""
         return self._config.copy()
+
 
     def reset_to_defaults(self) -> None:
         """Reset all configuration to schema defaults"""
@@ -174,9 +242,11 @@ class ConfigManager:
             self._config[key] = schema.default
         self._dirty = True
 
+
     def has_key(self, key: str) -> bool:
         """Check if key exists"""
         return key in self._config
+
 
 
 # Default application configuration schema
@@ -206,5 +276,29 @@ DEFAULT_CONFIG_SCHEMA: Dict[str, ConfigSchema] = {
         expected_type=bool,
         default=True,
         description="Remember last used source folder"
+    ),
+    "last_source_folder": ConfigSchema(
+        key="last_source_folder",
+        expected_type=str,
+        default="",
+        description="Last used source folder path"
+    ),
+    "last_destination_folder": ConfigSchema(
+        key="last_destination_folder",
+        expected_type=str,
+        default="",
+        description="Last used destination folder path"
+    ),
+    "auto_save_paths": ConfigSchema(
+        key="auto_save_paths",
+        expected_type=bool,
+        default=True,
+        description="Auto-save last used folder paths"
+    ),
+    "custom_categories": ConfigSchema(
+        key="custom_categories",
+        expected_type=dict,
+        default={},
+        description="User-defined custom file categories"
     ),
 }
