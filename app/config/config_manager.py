@@ -301,4 +301,11 @@ DEFAULT_CONFIG_SCHEMA: Dict[str, ConfigSchema] = {
         default={},
         description="User-defined custom file categories"
     ),
+    "duplicate_handling": ConfigSchema(
+    key="duplicate_handling",
+    expected_type=str,
+    default="rename",
+    validator=lambda v: v in ["skip", "rename", "replace"],
+    description="How to handle duplicate files (skip, rename, replace)"
+    ),
 }

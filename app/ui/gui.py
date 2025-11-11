@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
     QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QListWidget,
-    QInputDialog
+    QInputDialog, QRadioButton, QButtonGroup
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent
@@ -20,6 +20,7 @@ from app.core.file_organizer import FileOrganizer
 from app.core.constants import FileCategory, CUSTOM_CATEGORIES
 from app.config.config_manager import ConfigManager
 from app.services.logger_service import LoggerService
+from app.core.file_manager import DuplicateHandlingStrategy
 
 
 class DragDropLineEdit(LineEdit):
@@ -307,7 +308,7 @@ class SettingsPage:
         self.on_close = on_close
     
     def create(self) -> QWidget:
-        """Create settings page widget including persistent paths and custom categories."""
+        """Create settings page widget including all settings."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
@@ -320,6 +321,7 @@ class SettingsPage:
         layout.addWidget(TitleLabel("Settings"))
         
         layout.addWidget(self._create_persistent_paths_card())
+        layout.addWidget(self._create_duplicate_handling_card())
         layout.addWidget(self._create_custom_categories_card())
         
         layout.addStretch()
@@ -373,6 +375,61 @@ class SettingsPage:
         card_layout.addLayout(btn_layout)
         
         return card
+
+    def _create_duplicate_handling_card(self) -> CardWidget:
+        """Create card for duplicate file handling settings."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(12)
+        
+        card_layout.addWidget(BodyLabel("Duplicate File Handling"))
+        
+        # Radio buttons for duplicate strategy
+        self.duplicate_group = QButtonGroup()
+        
+        self.rename_radio = QRadioButton("Rename duplicates (file_1.txt, file_2.txt)")
+        self.skip_radio = QRadioButton("Skip duplicates (keep existing)")
+        self.replace_radio = QRadioButton("Replace duplicates (overwrite existing)")
+        
+        self.duplicate_group.addButton(self.rename_radio, 0)
+        self.duplicate_group.addButton(self.skip_radio, 1)
+        self.duplicate_group.addButton(self.replace_radio, 2)
+        
+        # Set current selection
+        current = self.config.get("duplicate_handling", "rename")
+        if current == "rename":
+            self.rename_radio.setChecked(True)
+        elif current == "skip":
+            self.skip_radio.setChecked(True)
+        elif current == "replace":
+            self.replace_radio.setChecked(True)
+        
+        card_layout.addWidget(self.rename_radio)
+        card_layout.addWidget(self.skip_radio)
+        card_layout.addWidget(self.replace_radio)
+        
+        # Save button
+        save_btn = PushButton("Save")
+        save_btn.setMinimumWidth(100)
+        save_btn.clicked.connect(self._save_duplicate_handling)
+        card_layout.addWidget(save_btn)
+        
+        return card
+
+    def _save_duplicate_handling(self) -> None:
+        """Save duplicate handling preference."""
+        if self.rename_radio.isChecked():
+            strategy = "rename"
+        elif self.skip_radio.isChecked():
+            strategy = "skip"
+        elif self.replace_radio.isChecked():
+            strategy = "replace"
+        else:
+            strategy = "rename"
+        
+        self.config.set("duplicate_handling", strategy)
+        QMessageBox.information(None, "Saved", f"Duplicate handling set to: {strategy}")
 
     def _create_custom_categories_card(self) -> CardWidget:
         """Create card for managing custom file categories."""
@@ -488,19 +545,24 @@ class ChangelogsPage:
         
         layout.addWidget(TitleLabel("Changelogs"))
         
+        # Version 2.5.0
+        layout.addWidget(self._create_version_card("2.5.0", "November 2025", [
+            "Added duplicate file handling options can be configured in settings",
+            "Choose between rename, skip, or replace duplicates",
+        ]))
+
         # Version 2.4.0
         layout.addWidget(self._create_version_card("2.4.0", "November 2025", [
             "Added custom categories support",
             "Allows users to add and remove custom file categories"
         ]))
-        
+
         # Version 2.3.0
         layout.addWidget(self._create_version_card("2.3.0", "November 2025", [
             "Fixed nested folder organization",
             "Auto-cleanup empty folders after moving files",
             "Recursive file scanning in subdirectories",
         ]))
-
 
         # Version 2.2.0
         layout.addWidget(self._create_version_card("2.2.0", "November 2025", [
@@ -807,7 +869,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.4.0")
+        version_value = BodyLabel("2.5.0")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()
@@ -891,7 +953,6 @@ class AboutPage:
         card_layout.addLayout(type_layout)
         
         return card
-
 
 
 class FileOrganizerWindow(QMainWindow):
@@ -1150,8 +1211,17 @@ def main() -> None:
     config_file = Path.home() / ".file_organizer_config.json"
     config = ConfigManager(config_file, DEFAULT_CONFIG_SCHEMA)
     
+    # Get duplicate handling strategy from config
+    strategy_str = config.get("duplicate_handling", "rename")
+    strategy_map = {
+        "skip": DuplicateHandlingStrategy.SKIP,
+        "rename": DuplicateHandlingStrategy.RENAME,
+        "replace": DuplicateHandlingStrategy.REPLACE,
+    }
+    duplicate_strategy = strategy_map.get(strategy_str, DuplicateHandlingStrategy.RENAME)
+    
     file_service = FileService()
-    file_manager = FileManager(logger)
+    file_manager = FileManager(logger, duplicate_strategy=duplicate_strategy)
     organizer = FileOrganizer(logger, file_service, file_manager)
 
     window = FileOrganizerWindow(organizer, config, logger)
