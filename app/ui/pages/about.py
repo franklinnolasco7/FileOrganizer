@@ -5,7 +5,7 @@ from PyQt6.QtGui import QDesktopServices, QCursor
 
 from qfluentwidgets import (
     CardWidget, BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel,
-    SmoothScrollArea, HyperlinkLabel, isDarkTheme
+    SmoothScrollArea, HyperlinkLabel, isDarkTheme, MessageBox
 )
 from qfluentwidgets import FluentIcon as FIF
 

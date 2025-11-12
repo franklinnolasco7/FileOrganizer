@@ -222,6 +222,12 @@ class FileOrganizerWindow(QMainWindow):
         self.organize_page_obj.apply_hint_label_theme()
         self.changelogs_page_obj.apply_date_label_theme()
         
+        # Connect source input changes to update button states
+        self.organize_page_obj.source_input.textChanged.connect(self._update_button_states)
+        
+        # Set initial button states
+        self._update_button_states()
+        
         # Force update all pages to ensure proper theme rendering
         for i in range(self.stacked_widget.count()):
             page = self.stacked_widget.widget(i)
@@ -608,9 +614,7 @@ class FileOrganizerWindow(QMainWindow):
             
             # Update undo button state AFTER checking results
             # This ensures undo button reflects actual undoable operations
-            self.organize_page_obj.set_undo_enabled(
-                self.organizer.history.can_undo()
-            )
+            self._update_button_states()
         except Exception as e:
             self._show_info_bar("Organization Failed", str(e), InfoBarPosition.TOP, error=True)
         finally:
@@ -648,9 +652,8 @@ class FileOrganizerWindow(QMainWindow):
             try:
                 stats = self.organizer.undo_last_operation()
                 
-                # Update undo button state immediately after undo completes
-                can_undo = self.organizer.history.can_undo()
-                self.organize_page_obj.set_undo_enabled(can_undo)
+                # Update button states immediately after undo completes
+                self._update_button_states()
                 
                 # Show success with stats in InfoBar
                 self._show_info_bar(
@@ -660,14 +663,27 @@ class FileOrganizerWindow(QMainWindow):
                 )
             except Exception as e:
                 self._show_info_bar("Undo Failed", str(e), InfoBarPosition.TOP, error=True)
-                # Update button state even on error
-                self.organize_page_obj.set_undo_enabled(self.organizer.history.can_undo())
+                # Update button states even on error
+                self._update_button_states()
 
+    def _update_button_states(self) -> None:
+        """Update organize, preview, and undo button states based on current conditions"""
+        has_source = bool(self.organize_page_obj.get_source().strip())
+        can_undo = self.organizer.history.can_undo()
+        
+        # Organize and Preview buttons: enabled only when source folder is selected
+        self.organize_page_obj.organize_btn.setEnabled(has_source)
+        self.organize_page_obj.preview_btn.setEnabled(has_source)
+        
+        # Undo button: enabled only when there's history
+        self.organize_page_obj.undo_btn.setEnabled(can_undo)
+    
     def _browse_source(self) -> None:
         """Browse source folder"""
         folder = QFileDialog.getExistingDirectory(self, "Select Source Folder")
         if folder:
             self.organize_page_obj.source_input.setText(folder)
+            self._update_button_states()
 
     def _browse_dest(self) -> None:
         """Browse destination folder"""

@@ -159,3 +159,11 @@ class OperationHistory:
             return "No files"
         
         return f"{count} file{'s' if count != 1 else ''}"
+    
+    def remove_empty_current_batch(self) -> None:
+        """Remove current batch if it's empty"""
+        if (self._current_index >= 0 and 
+            self._current_index < len(self._history) and 
+            not self._history[self._current_index]):
+            self._history.pop(self._current_index)
+            self._current_index -= 1
