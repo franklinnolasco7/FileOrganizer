@@ -12,7 +12,7 @@ from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, Q
 
 from qfluentwidgets import (
     PushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
-    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface
+    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface, SpinBox, DoubleSpinBox
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -223,7 +223,10 @@ class PreviewDialog(QDialog):
         layout.setSpacing(16)
         
         # Title
-        title = TitleLabel(f"Found {preview_data['total']} files to organize")
+        title_text = f"Found {preview_data['total']} files to organize"
+        if preview_data.get('skipped_by_size', 0) > 0:
+            title_text += f" ({preview_data['skipped_by_size']} skipped by size filter)"
+        title = TitleLabel(title_text)
         layout.addWidget(title)
         
         # Category summary
@@ -270,8 +273,8 @@ class PreviewDialog(QDialog):
     def _create_file_table(self, files: list) -> QTableWidget:
         """Create table showing files and their destinations."""
         table = QTableWidget()
-        table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["File Name", "Current Location", "Destination Category"])
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["File Name", "Size (KB)", "Current Location", "Destination Category"])
         table.setRowCount(len(files))
         
         for row, file_info in enumerate(files):
@@ -279,19 +282,25 @@ class PreviewDialog(QDialog):
             name_item = QTableWidgetItem(file_info['name'])
             table.setItem(row, 0, name_item)
             
+            # File size
+            size_kb = file_info.get('size_kb', 0)
+            size_item = QTableWidgetItem(f"{size_kb:.2f}")
+            table.setItem(row, 1, size_item)
+            
             # Current location
             current_item = QTableWidgetItem(file_info['current'])
-            table.setItem(row, 1, current_item)
+            table.setItem(row, 2, current_item)
             
             # Category
             cat_item = QTableWidgetItem(file_info['category'])
-            table.setItem(row, 2, cat_item)
+            table.setItem(row, 3, cat_item)
         
         # Resize columns
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
@@ -322,6 +331,7 @@ class SettingsPage:
         
         layout.addWidget(self._create_persistent_paths_card())
         layout.addWidget(self._create_duplicate_handling_card())
+        layout.addWidget(self._create_size_filter_settings_card())
         layout.addWidget(self._create_custom_categories_card())
         
         layout.addStretch()
@@ -430,6 +440,70 @@ class SettingsPage:
         
         self.config.set("duplicate_handling", strategy)
         QMessageBox.information(None, "Saved", f"Duplicate handling set to: {strategy}")
+
+    def _create_size_filter_settings_card(self) -> CardWidget:
+        """Create card for file size filter default settings."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(12)
+        
+        card_layout.addWidget(BodyLabel("File Size Filter Defaults"))
+        
+        # Enable filter checkbox
+        self.settings_enable_filter = CheckBox("Enable size filter by default")
+        self.settings_enable_filter.setChecked(self.config.get("enable_size_filter", False))
+        card_layout.addWidget(self.settings_enable_filter)
+        
+        # Min size setting
+        min_layout = QHBoxLayout()
+        min_label = BodyLabel("Default Minimum Size (KB):")
+        min_label.setMinimumWidth(200)
+        self.settings_min_size = DoubleSpinBox()
+        self.settings_min_size.setRange(0, 999999999)
+        self.settings_min_size.setValue(self.config.get("min_file_size_kb", 0))
+        self.settings_min_size.setDecimals(2)
+        self.settings_min_size.setSingleStep(1)
+        self.settings_min_size.setMinimumWidth(150)
+        min_layout.addWidget(min_label)
+        min_layout.addWidget(self.settings_min_size)
+        min_layout.addStretch()
+        card_layout.addLayout(min_layout)
+        
+        # Max size setting
+        max_layout = QHBoxLayout()
+        max_label = BodyLabel("Default Maximum Size (KB):")
+        max_label.setMinimumWidth(200)
+        self.settings_max_size = DoubleSpinBox()
+        self.settings_max_size.setRange(0, 999999999)
+        self.settings_max_size.setValue(self.config.get("max_file_size_kb", 0))
+        self.settings_max_size.setDecimals(2)
+        self.settings_max_size.setSingleStep(1)
+        self.settings_max_size.setMinimumWidth(150)
+        max_layout.addWidget(max_label)
+        max_layout.addWidget(self.settings_max_size)
+        max_layout.addStretch()
+        card_layout.addLayout(max_layout)
+        
+        # Save button
+        save_btn = PushButton("Save")
+        save_btn.setMinimumWidth(100)
+        save_btn.clicked.connect(self._save_size_filter_settings)
+        card_layout.addWidget(save_btn)
+        
+        return card
+    
+    def _save_size_filter_settings(self) -> None:
+        """Save file size filter settings."""
+        enable_filter = self.settings_enable_filter.isChecked()
+        min_size = self.settings_min_size.value()
+        max_size = self.settings_max_size.value()
+        
+        self.config.set("enable_size_filter", enable_filter)
+        self.config.set("min_file_size_kb", min_size)
+        self.config.set("max_file_size_kb", max_size)
+        
+        QMessageBox.information(None, "Saved", "File size filter settings saved successfully!")
 
     def _create_custom_categories_card(self) -> CardWidget:
         """Create card for managing custom file categories."""
@@ -545,6 +619,13 @@ class ChangelogsPage:
         
         layout.addWidget(TitleLabel("Changelogs"))
         
+        # Version 2.6.0
+        layout.addWidget(self._create_version_card("2.6.0", "November 2025", [
+            "Added file size filter feature",
+            "Set minimum and maximum file size limits (in KB)",
+            "Skip files that don't meet size criteria",
+        ]))
+        
         # Version 2.5.0
         layout.addWidget(self._create_version_card("2.5.0", "November 2025", [
             "Added duplicate file handling options can be configured in settings",
@@ -655,6 +736,7 @@ class OrganizePage:
         layout.addWidget(self._create_source_card())
         layout.addWidget(self._create_dest_card())
         layout.addWidget(self._create_category_card())
+        layout.addWidget(self._create_size_filter_card())
         layout.addWidget(self._create_log_card())
         layout.addLayout(self._create_button_layout())
         layout.addStretch()
@@ -745,6 +827,63 @@ class OrganizePage:
         check_layout.addStretch()
         layout.addLayout(check_layout)
         return card
+    
+    def _create_size_filter_card(self) -> CardWidget:
+        """Create file size filter card"""
+        card = CardWidget()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+        
+        # Header with enable checkbox
+        header_layout = QHBoxLayout()
+        self.enable_size_filter_check = CheckBox("Enable File Size Filter")
+        self.enable_size_filter_check.setChecked(False)
+        self.enable_size_filter_check.toggled.connect(self._toggle_size_filter)
+        header_layout.addWidget(self.enable_size_filter_check)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+        
+        # Min/Max size inputs
+        size_layout = QHBoxLayout()
+        
+        # Min size
+        min_layout = QVBoxLayout()
+        min_layout.addWidget(BodyLabel("Minimum Size (KB)"))
+        self.min_size_input = DoubleSpinBox()
+        self.min_size_input.setRange(0, 999999999)
+        self.min_size_input.setValue(0)
+        self.min_size_input.setDecimals(2)
+        self.min_size_input.setSingleStep(1)
+        self.min_size_input.setMinimumWidth(150)
+        self.min_size_input.setEnabled(False)
+        min_layout.addWidget(self.min_size_input)
+        size_layout.addLayout(min_layout)
+        
+        size_layout.addSpacing(20)
+        
+        # Max size
+        max_layout = QVBoxLayout()
+        max_layout.addWidget(BodyLabel("Maximum Size (KB)"))
+        self.max_size_input = DoubleSpinBox()
+        self.max_size_input.setRange(0, 999999999)
+        self.max_size_input.setValue(0)
+        self.max_size_input.setDecimals(2)
+        self.max_size_input.setSingleStep(1)
+        self.max_size_input.setMinimumWidth(150)
+        self.max_size_input.setEnabled(False)
+        max_layout.addWidget(self.max_size_input)
+        size_layout.addLayout(max_layout)
+        
+        size_layout.addStretch()
+        layout.addLayout(size_layout)
+        
+        return card
+    
+    def _toggle_size_filter(self, enabled: bool) -> None:
+        """Enable/disable size filter inputs"""
+        self.min_size_input.setEnabled(enabled)
+        self.max_size_input.setEnabled(enabled)
 
     def _create_log_card(self) -> CardWidget:
         """Create activity log card"""
@@ -814,6 +953,14 @@ class OrganizePage:
     def get_active_categories(self) -> list:
         """Get selected categories"""
         return [cat for cat, check in self.category_checks.items() if check.isChecked()]
+    
+    def get_size_filter_settings(self) -> dict:
+        """Get size filter settings"""
+        return {
+            'enabled': self.enable_size_filter_check.isChecked(),
+            'min_size_kb': self.min_size_input.value(),
+            'max_size_kb': self.max_size_input.value()
+        }
 
     def append_log(self, message: str) -> None:
         """Append colored message to log"""
@@ -869,7 +1016,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.5.0")
+        version_value = BodyLabel("2.6.0")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()
@@ -1062,6 +1209,15 @@ class FileOrganizerWindow(QMainWindow):
                 self.organize_page_obj.source_input.setText(src)
             if dst:
                 self.organize_page_obj.dest_input.setText(dst)
+            
+            # Load size filter settings
+            enable_filter = self.config.get("enable_size_filter", False)
+            min_size = self.config.get("min_file_size_kb", 0)
+            max_size = self.config.get("max_file_size_kb", 0)
+            
+            self.organize_page_obj.enable_size_filter_check.setChecked(enable_filter)
+            self.organize_page_obj.min_size_input.setValue(min_size)
+            self.organize_page_obj.max_size_input.setValue(max_size)
 
     def _return_to_organize(self) -> None:
         """Return from settings to organize page."""
@@ -1072,6 +1228,7 @@ class FileOrganizerWindow(QMainWindow):
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
+        size_filter = self.organize_page_obj.get_size_filter_settings()
 
         if not source or not Path(source).exists():
             QMessageBox.warning(self, "Error", "Invalid source folder")
@@ -1087,11 +1244,17 @@ class FileOrganizerWindow(QMainWindow):
             preview_data = self.organizer.preview_organization(
                 Path(source),
                 Path(destination),
-                categories
+                categories,
+                min_size_kb=size_filter['min_size_kb'],
+                max_size_kb=size_filter['max_size_kb'],
+                enable_size_filter=size_filter['enabled']
             )
 
             if preview_data['total'] == 0:
-                QMessageBox.information(self, "Preview", "No files found to organize")
+                msg = "No files found to organize"
+                if size_filter['enabled'] and preview_data.get('skipped_by_size', 0) > 0:
+                    msg += f"\n({preview_data['skipped_by_size']} files skipped by size filter)"
+                QMessageBox.information(self, "Preview", msg)
                 return
 
             dialog = PreviewDialog(preview_data, self)
@@ -1105,6 +1268,7 @@ class FileOrganizerWindow(QMainWindow):
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
+        size_filter = self.organize_page_obj.get_size_filter_settings()
 
         if not source or not Path(source).exists():
             QMessageBox.warning(self, "Error", "Invalid source folder")
@@ -1122,7 +1286,10 @@ class FileOrganizerWindow(QMainWindow):
             stats = self.organizer.organize_folder(
                 Path(source),
                 Path(destination),
-                categories
+                categories,
+                min_size_kb=size_filter['min_size_kb'],
+                max_size_kb=size_filter['max_size_kb'],
+                enable_size_filter=size_filter['enabled']
             )
             
             self.organize_page_obj.set_undo_enabled(
@@ -1134,6 +1301,11 @@ class FileOrganizerWindow(QMainWindow):
             if auto_save_enabled:
                 self.config.set("last_source_folder", source)
                 self.config.set("last_destination_folder", destination)
+                
+                # Save size filter settings
+                self.config.set("enable_size_filter", size_filter['enabled'])
+                self.config.set("min_file_size_kb", size_filter['min_size_kb'])
+                self.config.set("max_file_size_kb", size_filter['max_size_kb'])
             
             QMessageBox.information(
                 self, "Success",

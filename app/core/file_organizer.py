@@ -54,6 +54,9 @@ class FileOrganizer:
         source_path: Path,
         destination_path: Path,
         active_categories: List[FileCategory] | None = None,
+        min_size_kb: float = 0,
+        max_size_kb: float = 0,
+        enable_size_filter: bool = False,
     ) -> Dict:
         """Preview files that will be organized without moving them.
         
@@ -61,6 +64,9 @@ class FileOrganizer:
             source_path: Source folder path
             destination_path: Destination folder path
             active_categories: Categories to organize
+            min_size_kb: Minimum file size in KB (0 = no minimum)
+            max_size_kb: Maximum file size in KB (0 = no maximum)
+            enable_size_filter: Whether to apply size filtering
             
         Returns:
             Dictionary with preview data (total, summary, files)
@@ -74,10 +80,16 @@ class FileOrganizer:
         preview_data = {
             'total': 0,
             'summary': {},
-            'files': []
+            'files': [],
+            'skipped_by_size': 0
         }
         
         for file_path in files:
+            # Check size filter
+            if enable_size_filter and not self._passes_size_filter(file_path, min_size_kb, max_size_kb):
+                preview_data['skipped_by_size'] += 1
+                continue
+            
             category = self.file_service.get_file_category(file_path)
             
             # Include file if category is active or OTHERS
@@ -88,11 +100,15 @@ class FileOrganizer:
                 cat_name = category.value
                 preview_data['summary'][cat_name] = preview_data['summary'].get(cat_name, 0) + 1
                 
+                # Get file size for display
+                file_size_kb = file_path.stat().st_size / 1024
+                
                 # Add file details
                 preview_data['files'].append({
                     'name': file_path.name,
                     'current': str(file_path.parent),
-                    'category': cat_name
+                    'category': cat_name,
+                    'size_kb': round(file_size_kb, 2)
                 })
         
         return preview_data
@@ -103,6 +119,9 @@ class FileOrganizer:
         source_path: Path,
         destination_path: Path,
         active_categories: List[FileCategory] | None = None,
+        min_size_kb: float = 0,
+        max_size_kb: float = 0,
+        enable_size_filter: bool = False,
     ) -> Dict[str, int]:
         """Organize files from source to destination by category.
         
@@ -122,6 +141,11 @@ class FileOrganizer:
             self.logger.info(f"Source: {validated_source}")
             self.logger.info(f"Destination: {validated_dest}")
             self.logger.info(f"Categories: {len(categories)} active")
+            if enable_size_filter:
+                if min_size_kb > 0:
+                    self.logger.info(f"Min size filter: {min_size_kb} KB")
+                if max_size_kb > 0:
+                    self.logger.info(f"Max size filter: {max_size_kb} KB")
             self.logger.separator()
 
 
@@ -135,7 +159,7 @@ class FileOrganizer:
             self.logger.info(f"Found {len(files)} files to organize")
 
 
-            stats = self._process_files(files, validated_dest, categories)
+            stats = self._process_files(files, validated_dest, categories, min_size_kb, max_size_kb, enable_size_filter)
 
 
             # Clean up empty folders after moving all files
@@ -225,6 +249,9 @@ class FileOrganizer:
         files: List[Path],
         destination_path: Path,
         categories: List[FileCategory],
+        min_size_kb: float = 0,
+        max_size_kb: float = 0,
+        enable_size_filter: bool = False,
     ) -> OrganizationStats:
         """Process each file and accumulate statistics."""
         stats = OrganizationStats()
@@ -232,6 +259,12 @@ class FileOrganizer:
 
         for file_path in files:
             try:
+                # Check size filter
+                if enable_size_filter and not self._passes_size_filter(file_path, min_size_kb, max_size_kb):
+                    self.logger.debug(f"⊘ {file_path.name} (size filter)")
+                    stats.skipped += 1
+                    continue
+                
                 result = self._organize_file(file_path, destination_path, categories)
                 if result == "moved":
                     stats.moved += 1
@@ -350,6 +383,34 @@ class FileOrganizer:
             return path.is_dir() and not any(path.iterdir())
         except Exception:
             return False
+    
+    @staticmethod
+    def _passes_size_filter(file_path: Path, min_size_kb: float, max_size_kb: float) -> bool:
+        """Check if file passes size filter criteria.
+        
+        Args:
+            file_path: Path to file
+            min_size_kb: Minimum size in KB (0 = no minimum)
+            max_size_kb: Maximum size in KB (0 = no maximum)
+            
+        Returns:
+            True if file passes filter, False otherwise
+        """
+        try:
+            file_size_kb = file_path.stat().st_size / 1024
+            
+            # Check minimum
+            if min_size_kb > 0 and file_size_kb < min_size_kb:
+                return False
+            
+            # Check maximum
+            if max_size_kb > 0 and file_size_kb > max_size_kb:
+                return False
+            
+            return True
+        except Exception:
+            # If we can't get file size, include the file
+            return True
 
 
     def create_jeff_su_framework(

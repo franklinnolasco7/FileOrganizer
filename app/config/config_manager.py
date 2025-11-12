@@ -308,4 +308,24 @@ DEFAULT_CONFIG_SCHEMA: Dict[str, ConfigSchema] = {
     validator=lambda v: v in ["skip", "rename", "replace"],
     description="How to handle duplicate files (skip, rename, replace)"
     ),
+    "min_file_size_kb": ConfigSchema(
+        key="min_file_size_kb",
+        expected_type=(int, float),
+        default=0,
+        validator=lambda v: v >= 0,
+        description="Minimum file size in KB (0 = no minimum)"
+    ),
+    "max_file_size_kb": ConfigSchema(
+        key="max_file_size_kb",
+        expected_type=(int, float),
+        default=0,
+        validator=lambda v: v >= 0,
+        description="Maximum file size in KB (0 = no maximum)"
+    ),
+    "enable_size_filter": ConfigSchema(
+        key="enable_size_filter",
+        expected_type=bool,
+        default=False,
+        description="Enable file size filtering"
+    ),
 }
