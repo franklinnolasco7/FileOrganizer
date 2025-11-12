@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Set
+import json
+from datetime import datetime
 from app.core.constants import FileCategory, JEFF_SU_STRUCTURE
 from app.services.logger_service import LoggerService
 from app.services.file_service import FileService
@@ -37,6 +39,7 @@ class FileOrganizer:
         logger: LoggerService,
         file_service: FileService | None = None,
         file_manager: FileManager | None = None,
+        config = None,
     ) -> None:
         """Initialize file organizer with dependencies
         
@@ -44,12 +47,14 @@ class FileOrganizer:
             logger: Service for logging operations
             file_service: Service for file categorization
             file_manager: Service for file operations
+            config: Configuration manager for settings
         """
         self.logger = logger
         self.file_service = file_service or FileService()
         self.file_manager = file_manager or FileManager(logger)
         self.history = OperationHistory()
         self._created_folders: Set[Path] = set()
+        self.config = config
 
 
     def preview_organization(
@@ -154,27 +159,33 @@ class FileOrganizer:
 
 
             self.logger.separator()
-            self.logger.info("Starting file organization")
-            self.logger.info(f"Source: {validated_source}")
-            self.logger.info(f"Destination: {validated_dest}")
-            self.logger.info(f"Categories: {len(categories)} active")
+            self.logger.info("Starting file organization process")
+            self.logger.info(f"Source Directory: {validated_source}")
+            self.logger.info(f"Destination Directory: {validated_dest}")
+            self.logger.info(f"Active Categories: {len(categories)}")
             if enable_size_filter:
                 if min_size_kb > 0:
-                    self.logger.info(f"Min size filter: {min_size_kb} KB")
+                    self.logger.info(f"Minimum Size Filter: {min_size_kb} KB")
                 if max_size_kb > 0:
-                    self.logger.info(f"Max size filter: {max_size_kb} KB")
+                    self.logger.info(f"Maximum Size Filter: {max_size_kb} KB")
             self.logger.separator()
 
 
             # Now scans nested folders recursively
             files = self.file_manager.get_files_in_folder(validated_source, recursive=True)
             if not files:
-                self.logger.warning("No files found in source folder")
+                self.logger.warning("No files found in source directory")
+                # Remove empty batch since no files were processed
+                self.history.remove_empty_current_batch()
                 return OrganizationStats().to_dict()
 
 
-            self.logger.info(f"Found {len(files)} files to organize")
+            self.logger.info(f"Scanning Complete: Found {len(files)} file(s) to process")
 
+            # Create recovery backup before processing files
+            recovery_file = self._create_recovery_backup(validated_source, validated_dest, files, categories)
+            if recovery_file:
+                self.logger.info(f"Full backup created: {recovery_file.name}")
 
             stats = self._process_files(files, validated_dest, categories, min_size_kb, max_size_kb, enable_size_filter)
 
@@ -182,10 +193,16 @@ class FileOrganizer:
             # Clean up empty folders after moving all files
             folders_removed = self.file_manager.cleanup_empty_folders(validated_source)
             if folders_removed > 0:
-                self.logger.info(f"Removed {folders_removed} empty folders")
+                self.logger.info(f"Cleanup: Removed {folders_removed} empty folder(s)")
 
 
             self._log_completion_stats(stats)
+            
+            # If no files were actually moved, remove the empty batch from history
+            # This prevents undo button from being enabled when nothing was done
+            if stats.moved == 0:
+                self.history.remove_empty_current_batch()
+            
             return stats.to_dict()
 
 
@@ -320,7 +337,7 @@ class FileOrganizer:
             try:
                 # Check size filter
                 if enable_size_filter and not self._passes_size_filter(file_path, min_size_kb, max_size_kb):
-                    self.logger.debug(f"⊘ {file_path.name} (size filter)")
+                    self.logger.debug(f"Skipped: {file_path.name} (size filter)")
                     stats.skipped += 1
                     continue
                 
@@ -332,7 +349,7 @@ class FileOrganizer:
 
 
             except Exception as e:
-                self.logger.error(f"Failed to organize {file_path.name}: {str(e)}")
+                self.logger.error(f"Failed to organize file '{file_path.name}': {str(e)}")
                 stats.errors += 1
 
 
@@ -362,7 +379,7 @@ class FileOrganizer:
 
 
         if category not in active_categories and category != FileCategory.OTHERS:
-            self.logger.debug(f"⊘ {file_path.name} (category inactive)")
+            self.logger.debug(f"Skipped: {file_path.name} (category inactive)")
             return "skipped"
 
 
@@ -384,7 +401,7 @@ class FileOrganizer:
                 category=category.value,
             )
             
-            self.logger.info(f"✓ {file_path.name} → {category.value}/")
+            self.logger.info(f"Moved: {file_path.name} → {category.value}/")
             return "moved"
         else:
             raise FileOperationError(f"Failed to move {file_path.name}: {result.error}")
@@ -409,7 +426,7 @@ class FileOrganizer:
             raise OrganizationError("No operations to undo")
         
         self.logger.separator()
-        self.logger.info(f"Undoing {len(batch)} file operations...")
+        self.logger.info(f"Starting undo operation for {len(batch)} file(s)...")
         
         stats = {"restored": 0, "errors": 0, "folders_removed": 0}
         folders_to_check: Set[Path] = set()
@@ -424,36 +441,266 @@ class FileOrganizer:
                 )
                 
                 if result.success:
-                    self.logger.info(f"↩ {operation.destination.name} → {operation.source.parent.name}/")
+                    self.logger.info(f"Restored: {operation.destination.name} → {operation.source.parent.name}/")
                     stats["restored"] += 1
                 else:
-                    self.logger.error(f"Failed to restore {operation.destination.name}")
+                    self.logger.error(f"Failed to restore file '{operation.destination.name}'")
                     stats["errors"] += 1
             except Exception as e:
-                self.logger.error(f"Undo error: {str(e)}")
+                self.logger.error(f"Undo operation error: {str(e)}")
                 stats["errors"] += 1
         
         for folder in folders_to_check:
             try:
                 if folder.exists() and self._is_empty_directory(folder):
                     folder.rmdir()
-                    self.logger.info(f"🗑 Removed empty folder: {folder.name}/")
+                    self.logger.info(f"Deleted: Empty folder '{folder.name}/'")
                     stats["folders_removed"] += 1
             except Exception as e:
-                self.logger.warning(f"Could not remove folder {folder.name}: {str(e)}")
+                self.logger.warning(f"Could not remove folder '{folder.name}': {str(e)}")
         
         self.history.mark_undo_complete()
         self._created_folders.clear()
         
         self.logger.separator()
-        self.logger.success(f"Undo complete! Restored {stats['restored']} files")
+        self.logger.success(f"Undo Complete: Restored {stats['restored']} file(s)")
         if stats["folders_removed"] > 0:
-            self.logger.info(f"Removed {stats['folders_removed']} empty folders")
+            self.logger.info(f"Cleanup: Removed {stats['folders_removed']} empty folder(s)")
         if stats["errors"] > 0:
-            self.logger.warning(f"Errors during undo: {stats['errors']}")
+            self.logger.warning(f"Encountered {stats['errors']} error(s) during undo operation")
         self.logger.separator()
         
         return stats
+
+    
+    def _create_recovery_backup(
+        self,
+        source_path: Path,
+        destination_path: Path,
+        files: List[Path],
+        categories: List[FileCategory]
+    ) -> Path | None:
+        """Create a full recovery backup with actual file copies before organizing
+        
+        Creates a backup folder with actual file copies and metadata JSON.
+        This provides true disaster recovery - files can be restored even if 
+        corrupted, deleted by antivirus, or lost after organization.
+        
+        Args:
+            source_path: Source directory
+            destination_path: Destination directory  
+            files: List of files to process
+            categories: Active categories
+            
+        Returns:
+            Path to recovery folder, or None if backup failed or disabled
+        """
+        # Check if recovery backup is enabled
+        if self.config and not self.config.get("enable_recovery_backup", True):
+            return None
+            
+        try:
+            import shutil
+            
+            # Get custom recovery folder or use default
+            if self.config:
+                recovery_dir_str = self.config.get("recovery_backup_folder", str(Path.home() / "FileOrganizer_Recovery"))
+                recovery_base = Path(recovery_dir_str).expanduser().resolve()
+            else:
+                recovery_base = Path.home() / "FileOrganizer_Recovery"
+            
+            recovery_base.mkdir(parents=True, exist_ok=True)
+            
+            # Get retention days from config
+            retention_days = self.config.get("recovery_backup_retention_days", 30) if self.config else 30
+            
+            # Clean up old backups
+            self._cleanup_old_backups(recovery_base, days=retention_days)
+            
+            # Get size limit from config
+            max_backup_size_gb = self.config.get("recovery_backup_size_limit_gb", 5.0) if self.config else 5.0
+            
+            # Check available storage space
+            available_space_gb = self._get_available_space_gb(recovery_base)
+            if available_space_gb < max_backup_size_gb:
+                self.logger.warning(f"Low disk space: {available_space_gb:.2f}GB available, need {max_backup_size_gb:.2f}GB")
+                # Use whatever space is available (minus 1GB buffer for safety)
+                max_backup_size_gb = max(0.1, available_space_gb - 1.0)
+                self.logger.info(f"Adjusted backup size limit to {max_backup_size_gb:.2f}GB")
+            
+            # Create timestamped backup folder
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_folder = recovery_base / f"backup_{timestamp}"
+            backup_folder.mkdir(parents=True, exist_ok=True)
+            
+            # Create files subfolder to store actual file copies
+            files_backup_dir = backup_folder / "files"
+            files_backup_dir.mkdir(exist_ok=True)
+            
+            self.logger.info(f"Creating full backup with file copies...")
+            
+            # Build recovery data and copy files
+            recovery_data = {
+                "timestamp": timestamp,
+                "source": str(source_path),
+                "destination": str(destination_path),
+                "categories": [cat.name for cat in categories],
+                "total_files": len(files),
+                "backup_type": "full",
+                "files": []
+            }
+            
+            # Copy actual files and record metadata (limit to prevent disk overflow)
+            files_copied = 0
+            files_skipped = 0
+            total_size_bytes = 0
+            max_backup_size_bytes = int(max_backup_size_gb * 1024 * 1024 * 1024)
+            
+            for file_path in files[:1000]:  # Limit to first 1000 files
+                try:
+                    # Check backup size limit
+                    if total_size_bytes > max_backup_size_bytes:
+                        self.logger.warning(f"Backup size limit reached ({max_backup_size_gb:.1f}GB), skipping remaining files")
+                        files_skipped = len(files) - files_copied
+                        break
+                    
+                    category = self.file_service.get_file_category(file_path)
+                    if category and file_path.exists():
+                        # Copy file to backup folder with unique name
+                        backup_filename = f"{files_copied}_{file_path.name}"
+                        backup_file_path = files_backup_dir / backup_filename
+                        
+                        # Copy the actual file
+                        shutil.copy2(file_path, backup_file_path)
+                        file_size = file_path.stat().st_size
+                        total_size_bytes += file_size
+                        
+                        dest_folder = destination_path / category.value
+                        dest_file = dest_folder / file_path.name
+                        
+                        recovery_data["files"].append({
+                            "original": str(file_path),
+                            "destination": str(dest_file),
+                            "category": category.value,
+                            "backup_filename": backup_filename,
+                            "file_size": file_size
+                        })
+                        files_copied += 1
+                        
+                except Exception as e:
+                    self.logger.debug(f"Failed to backup file: {file_path.name}, error: {str(e)}")
+                    files_skipped += 1
+                    continue
+            
+            # Add summary info
+            recovery_data["backup_size_bytes"] = total_size_bytes
+            recovery_data["backup_size_mb"] = round(total_size_bytes / (1024 * 1024), 2)
+            recovery_data["files_backed_up"] = files_copied
+            recovery_data["files_skipped"] = files_skipped
+            
+            self.logger.info(f"Backed up {files_copied} files ({recovery_data['backup_size_mb']:.2f} MB)")
+            if files_skipped > 0:
+                self.logger.warning(f"Skipped {files_skipped} files during backup")
+            
+            # Save metadata JSON
+            metadata_file = backup_folder / "metadata.json"
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(recovery_data, f, indent=2, ensure_ascii=False)
+            
+            # Create README in backup folder
+            readme_file = backup_folder / "README.txt"
+            readme_content = f"""FileOrganizer Full Backup - {timestamp}
+========================================
+
+This folder contains a complete backup of files before organization.
+
+Backup Details:
+- Files backed up: {files_copied}
+- Backup size: {recovery_data['backup_size_mb']:.2f} MB
+- Source: {source_path}
+- Destination: {destination_path}
+
+Contents:
+- metadata.json: Information about all backed up files
+- files/: Folder containing actual file copies
+
+How to restore:
+1. Use the Recovery Manager in the app (recommended)
+2. Or manually: Files in the 'files/' folder can be copied back
+
+Note: This backup will be automatically deleted after 30 days.
+"""
+            readme_file.write_text(readme_content, encoding='utf-8')
+            
+            return backup_folder
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to create recovery backup: {str(e)}")
+            return None
+
+    def _cleanup_old_backups(self, recovery_folder: Path, days: int = 30) -> None:
+        """Delete backup folders older than specified days.
+        
+        Args:
+            recovery_folder: Path to recovery backups folder
+            days: Number of days to keep backups (default 30)
+        """
+        try:
+            from datetime import timedelta
+            cutoff_date = datetime.now() - timedelta(days=days)
+            deleted_count = 0
+            
+            # Find all backup folders
+            for backup_dir in recovery_folder.glob("backup_*"):
+                if backup_dir.is_dir():
+                    try:
+                        # Extract timestamp from folder name
+                        timestamp_str = backup_dir.name.replace("backup_", "")
+                        backup_date = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                        
+                        # Delete if older than cutoff
+                        if backup_date < cutoff_date:
+                            import shutil
+                            shutil.rmtree(backup_dir)
+                            deleted_count += 1
+                            self.logger.debug(f"Deleted old backup: {backup_dir.name}")
+                    except Exception:
+                        # Skip if we can't parse date or delete fails
+                        continue
+            
+            # Also clean up old JSON files (legacy format)
+            for json_file in recovery_folder.glob("recovery_*.json"):
+                try:
+                    timestamp_str = json_file.stem.replace("recovery_", "")
+                    backup_date = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                    if backup_date < cutoff_date:
+                        json_file.unlink()
+                        deleted_count += 1
+                except Exception:
+                    continue
+            
+            if deleted_count > 0:
+                self.logger.info(f"Cleaned up {deleted_count} old backup(s) older than {days} days")
+                
+        except Exception as e:
+            self.logger.debug(f"Backup cleanup failed: {str(e)}")
+
+    def _get_available_space_gb(self, path: Path) -> float:
+        """Get available disk space in GB for the given path.
+        
+        Args:
+            path: Path to check disk space for
+            
+        Returns:
+            Available space in GB
+        """
+        try:
+            import shutil
+            stat = shutil.disk_usage(path)
+            return stat.free / (1024 * 1024 * 1024)  # Convert bytes to GB
+        except Exception as e:
+            self.logger.debug(f"Could not check disk space: {str(e)}")
+            return 100.0  # Return large default if check fails
 
 
     @staticmethod
@@ -558,33 +805,33 @@ class FileOrganizer:
             README content string
         """
         return f"""JEFF SU FILE MANAGEMENT FRAMEWORK
-═══════════════════════════════════════════════════
+        ═══════════════════════════════════════════════════
 
 
 
-Folder: {folder_name}
-Description: {info['description']}
-Keywords: {info['keywords']}
+        Folder: {folder_name}
+        Description: {info['description']}
+        Keywords: {info['keywords']}
 
 
 
-This folder is part of Jeff Su's File Management Framework.
-Windows CLI Compatible (no brackets [ ])
+        This folder is part of Jeff Su's File Management Framework.
+        Windows CLI Compatible (no brackets [ ])
 
 
 
-PRINCIPLES:
-──────────────────────────────────────────────────
-• Organize by WHERE YOU USE it
-• Maximum 5 folder levels
-• Use consistent naming conventions
-• Keep files searchable and descriptive
-• Archive quarterly
+        PRINCIPLES:
+        ──────────────────────────────────────────────────
+        • Organize by WHERE YOU USE it
+        • Maximum 5 folder levels
+        • Use consistent naming conventions
+        • Keep files searchable and descriptive
+        • Archive quarterly
 
 
 
-═══════════════════════════════════════════════════
-"""
+        ═══════════════════════════════════════════════════
+        """
 
 
     def _log_completion_stats(self, stats: OrganizationStats) -> None:
@@ -594,8 +841,9 @@ PRINCIPLES:
             stats: Organization statistics to log
         """
         self.logger.separator()
-        self.logger.success("Organization complete!")
-        self.logger.info(f"✓ Moved: {stats.moved}")
-        self.logger.info(f"✗ Errors: {stats.errors}")
-        self.logger.info(f"⊘ Skipped: {stats.skipped}")
+        self.logger.success("Organization Process Complete!")
+        self.logger.info(f"Files Moved: {stats.moved}")
+        self.logger.info(f"Files Skipped: {stats.skipped}")
+        if stats.errors > 0:
+            self.logger.error(f"Errors Encountered: {stats.errors}")
         self.logger.separator()

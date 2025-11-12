@@ -1,18 +1,22 @@
 """Main application window with organize, changelogs, settings, and about pages."""
 import sys
 from pathlib import Path
+from typing import List
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
-    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QListWidget,
-    QInputDialog, QRadioButton, QButtonGroup
+    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+    QInputDialog, QButtonGroup
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent
+from PyQt6.QtCore import Qt, QTimer, QProcess, QUrl, QPropertyAnimation, QEasingCurve, QSize
+from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent, QDesktopServices
 
 from qfluentwidgets import (
-    PushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
-    BodyLabel, TitleLabel, setTheme, Theme, NavigationInterface, SpinBox, DoubleSpinBox
+    PushButton, PrimaryPushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
+    BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel, CaptionLabel, setTheme, Theme, 
+    NavigationInterface, SpinBox, DoubleSpinBox, NavigationItemPosition, SmoothScrollArea, 
+    InfoBar, InfoBarPosition, ToolTipFilter, isDarkTheme, setCustomStyleSheet, ListWidget, 
+    RadioButton, HyperlinkLabel, MessageBox, Dialog, ComboBox
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -23,1186 +27,8 @@ from app.services.logger_service import LoggerService
 from app.core.file_manager import DuplicateHandlingStrategy
 
 
-class DragDropLineEdit(LineEdit):
-    """LineEdit with enhanced drag and drop support for folders."""
-    
-    def __init__(self, *args, **kwargs):
-        """Initialize drag-drop enabled line edit."""
-        super().__init__(*args, **kwargs)
-        self.setAcceptDrops(True)
-        self._is_dragging = False
-        
-        self._default_style = """
-            QLineEdit {
-                border: 2px solid transparent;
-                border-radius: 6px;
-                padding: 9px 12px;
-                background-color: rgba(255, 255, 255, 0.05);
-                font-size: 13px;
-            }
-            QLineEdit:hover {
-                background-color: rgba(255, 255, 255, 0.08);
-            }
-            QLineEdit:focus {
-                border: 2px solid #0078D4;
-                background-color: rgba(255, 255, 255, 0.05);
-            }
-        """
-        
-        self._drag_style = """
-            QLineEdit {
-                border: 2px dashed #4CAF50;
-                border-radius: 6px;
-                padding: 9px 12px;
-                background-color: rgba(76, 175, 80, 0.15);
-                font-size: 13px;
-            }
-        """
-        
-        self._invalid_style = """
-            QLineEdit {
-                border: 2px dashed #F44336;
-                border-radius: 6px;
-                padding: 9px 12px;
-                background-color: rgba(244, 67, 54, 0.15);
-                font-size: 13px;
-            }
-        """
-        
-        self.setStyleSheet(self._default_style)
-        self.setFixedHeight(38)
-    
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Handle drag enter with visual feedback."""
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if urls:
-                path = Path(urls[0].toLocalFile())
-                if path.is_dir():
-                    event.acceptProposedAction()
-                    self._is_dragging = True
-                    self.setStyleSheet(self._drag_style)
-                    self.setPlaceholderText("Drop folder here...")
-                else:
-                    event.ignore()
-                    self._is_dragging = True
-                    self.setStyleSheet(self._invalid_style)
-                    self.setPlaceholderText("❌ Folders only")
-            else:
-                event.ignore()
-        else:
-            event.ignore()
-    
-    def dragMoveEvent(self, event) -> None:
-        """Handle drag move to maintain styling."""
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if urls and Path(urls[0].toLocalFile()).is_dir():
-                event.acceptProposedAction()
-    
-    def dragLeaveEvent(self, event) -> None:
-        """Reset styling when drag leaves."""
-        self._is_dragging = False
-        self.setStyleSheet(self._default_style)
-        self._reset_placeholder()
-    
-    def dropEvent(self, event) -> None:
-        """Handle drop with validation and feedback."""
-        self._is_dragging = False
-        self.setStyleSheet(self._default_style)
-        
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if urls:
-                folder_path = Path(urls[0].toLocalFile())
-                if folder_path.is_dir():
-                    self.setText(str(folder_path))
-                    event.acceptProposedAction()
-                    self._reset_placeholder()
-                    
-                    self.setStyleSheet("""
-                        QLineEdit {
-                            border: 2px solid #4CAF50;
-                            border-radius: 6px;
-                            padding: 9px 12px;
-                            background-color: rgba(76, 175, 80, 0.2);
-                            font-size: 13px;
-                        }
-                    """)
-                    
-                    QTimer.singleShot(500, lambda: self.setStyleSheet(self._default_style))
-                else:
-                    event.ignore()
-                    self._reset_placeholder()
-        else:
-            event.ignore()
-            self._reset_placeholder()
-    
-    def _reset_placeholder(self) -> None:
-        """Reset placeholder to original text."""
-        if not self.text():
-            if hasattr(self, 'objectName') and 'source' in self.objectName().lower():
-                self.setPlaceholderText("Select or drag source folder...")
-            else:
-                self.setPlaceholderText("Select or drag destination folder...")
-
-
-class ColoredPlainTextEdit(PlainTextEdit):
-    """Custom text edit with color-coded log levels."""
-    
-    COLORS = {
-        "INFO": QColor("#B0B0B0"),
-        "SUCCESS": QColor("#4CAF50"),
-        "WARNING": QColor("#FF9800"),
-        "ERROR": QColor("#F44336"),
-        "DEBUG": QColor("#757575"),
-    }
-    
-    def __init__(self) -> None:
-        """Initialize colored text edit"""
-        super().__init__()
-        self.setReadOnly(True)
-        self.setMinimumHeight(150)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.setMaximumBlockCount(500)
-    
-    def append_colored(self, message: str) -> None:
-        """Append message with color based on log level."""
-        level = self._extract_level(message)
-        formatted_msg = self._strip_timestamp(message)
-        
-        self.blockSignals(True)
-        
-        cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        
-        fmt = QTextCharFormat()
-        fmt.setForeground(self.COLORS.get(level, self.COLORS["INFO"]))
-        if level == "ERROR":
-            fmt.setFontWeight(700)
-        
-        cursor.insertText(formatted_msg + "\n", fmt)
-        self.setTextCursor(cursor)
-        
-        self.blockSignals(False)
-        self.ensureCursorVisible()
-    
-    @staticmethod
-    def _strip_timestamp(message: str) -> str:
-        """Remove first timestamp bracket; keep [LEVEL] and message."""
-        try:
-            first_bracket = message.find("]")
-            if first_bracket != -1:
-                remainder = message[first_bracket+1:].strip()
-                return remainder
-        except Exception:
-            pass
-        return message
-    
-    @staticmethod
-    def _extract_level(message: str) -> str:
-        """Extract log level from message."""
-        levels = ["ERROR", "WARNING", "SUCCESS", "DEBUG", "INFO"]
-        for level in levels:
-            if f"[{level}]" in message:
-                return level
-        return "INFO"
-
-
-class PreviewDialog(QDialog):
-    """Dialog showing file organization preview."""
-    
-    def __init__(self, preview_data: dict, parent=None):
-        """Initialize preview dialog with file data."""
-        super().__init__(parent)
-        self.setWindowTitle("File Organization Preview")
-        self.resize(900, 600)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-        
-        # Title
-        title_text = f"Found {preview_data['total']} files to organize"
-        if preview_data.get('skipped_by_size', 0) > 0:
-            title_text += f" ({preview_data['skipped_by_size']} skipped by size filter)"
-        title = TitleLabel(title_text)
-        layout.addWidget(title)
-        
-        # Category summary
-        if preview_data['summary']:
-            summary_card = self._create_summary_card(preview_data['summary'])
-            layout.addWidget(summary_card)
-        
-        # File list table
-        if preview_data['files']:
-            layout.addWidget(BodyLabel("File Details:"))
-            table = self._create_file_table(preview_data['files'])
-            layout.addWidget(table, 1)
-        
-        # Close button
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        close_btn = PushButton("Close")
-        close_btn.setMinimumWidth(100)
-        close_btn.clicked.connect(self.accept)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-    
-    def _create_summary_card(self, summary: dict) -> CardWidget:
-        """Create summary card with category counts."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(8)
-        
-        card_layout.addWidget(BodyLabel("Files per Category:"))
-        
-        # Create grid layout for categories
-        grid_layout = QHBoxLayout()
-        for category, count in summary.items():
-            cat_label = BodyLabel(f"📁 {category}: {count}")
-            cat_label.setStyleSheet("font-weight: 500;")
-            grid_layout.addWidget(cat_label)
-        
-        grid_layout.addStretch()
-        card_layout.addLayout(grid_layout)
-        
-        return card
-    
-    def _create_file_table(self, files: list) -> QTableWidget:
-        """Create table showing files and their destinations."""
-        table = QTableWidget()
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(["File Name", "Size (KB)", "Current Location", "Destination Category"])
-        table.setRowCount(len(files))
-        
-        for row, file_info in enumerate(files):
-            # File name
-            name_item = QTableWidgetItem(file_info['name'])
-            table.setItem(row, 0, name_item)
-            
-            # File size
-            size_kb = file_info.get('size_kb', 0)
-            size_item = QTableWidgetItem(f"{size_kb:.2f}")
-            table.setItem(row, 1, size_item)
-            
-            # Current location
-            current_item = QTableWidgetItem(file_info['current'])
-            table.setItem(row, 2, current_item)
-            
-            # Category
-            cat_item = QTableWidgetItem(file_info['category'])
-            table.setItem(row, 3, cat_item)
-        
-        # Resize columns
-        header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setAlternatingRowColors(True)
-        
-        return table
-
-
-class SettingsPage:
-    """Settings panel for user preferences and custom categories"""
-    
-    def __init__(self, config: ConfigManager, on_close) -> None:
-        """Initialize settings page
-        
-        Args:
-            config: Configuration manager
-            on_close: Close callback function
-        """
-        self.config = config
-        self.on_close = on_close
-    
-    def create(self) -> QWidget:
-        """Create settings page widget
-        
-        Returns:
-            Settings page widget
-        """
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-        
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
-        
-        layout.addWidget(TitleLabel("Settings"))
-        
-        layout.addWidget(self._create_persistent_paths_card())
-        layout.addWidget(self._create_duplicate_handling_card())
-        layout.addWidget(self._create_size_filter_settings_card())
-        layout.addWidget(self._create_log_export_card())
-        layout.addWidget(self._create_custom_categories_card())
-        
-        layout.addStretch()
-        
-        scroll.setWidget(widget)
-        return scroll
-
-    def _create_persistent_paths_card(self) -> CardWidget:
-        """Create card for persistent folder path settings."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 12, 12, 12)
-        card_layout.setSpacing(12)
-        
-        card_layout.addWidget(BodyLabel("Persistent Paths"))
-        
-        src_layout = QHBoxLayout()
-        src_label = BodyLabel("Last Source Folder")
-        self.src_input = LineEdit()
-        self.src_input.setPlaceholderText("Enter last used source path")
-        self.src_input.setText(self.config.get("last_source_folder", ""))
-        src_layout.addWidget(src_label)
-        src_layout.addWidget(self.src_input, 1)
-        card_layout.addLayout(src_layout)
-        
-        dst_layout = QHBoxLayout()
-        dst_label = BodyLabel("Last Destination Folder")
-        self.dst_input = LineEdit()
-        self.dst_input.setPlaceholderText("Enter last used destination path")
-        self.dst_input.setText(self.config.get("last_destination_folder", ""))
-        dst_layout.addWidget(dst_label)
-        dst_layout.addWidget(self.dst_input, 1)
-        card_layout.addLayout(dst_layout)
-        
-        self.auto_save_cb = CheckBox("Auto-save on change (auto-fill paths on startup)")
-        self.auto_save_cb.setChecked(self.config.get("auto_save_paths", True))
-        card_layout.addWidget(self.auto_save_cb)
-        
-        btn_layout = QHBoxLayout()
-        save_btn = PushButton("Save")
-        save_btn.setMinimumWidth(100)
-        save_btn.clicked.connect(self._save_persistent_paths)
-        btn_layout.addWidget(save_btn)
-        
-        close_btn = PushButton("Close")
-        close_btn.setMinimumWidth(100)
-        close_btn.clicked.connect(self.on_close)
-        btn_layout.addWidget(close_btn)
-        
-        btn_layout.addStretch()
-        card_layout.addLayout(btn_layout)
-        
-        return card
-
-    def _create_duplicate_handling_card(self) -> CardWidget:
-        """Create card for duplicate file handling settings."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 12, 12, 12)
-        card_layout.setSpacing(12)
-        
-        card_layout.addWidget(BodyLabel("Duplicate File Handling"))
-        
-        # Radio buttons for duplicate strategy
-        self.duplicate_group = QButtonGroup()
-        
-        self.rename_radio = QRadioButton("Rename duplicates (file_1.txt, file_2.txt)")
-        self.skip_radio = QRadioButton("Skip duplicates (keep existing)")
-        self.replace_radio = QRadioButton("Replace duplicates (overwrite existing)")
-        
-        self.duplicate_group.addButton(self.rename_radio, 0)
-        self.duplicate_group.addButton(self.skip_radio, 1)
-        self.duplicate_group.addButton(self.replace_radio, 2)
-        
-        # Set current selection
-        current = self.config.get("duplicate_handling", "rename")
-        if current == "rename":
-            self.rename_radio.setChecked(True)
-        elif current == "skip":
-            self.skip_radio.setChecked(True)
-        elif current == "replace":
-            self.replace_radio.setChecked(True)
-        
-        card_layout.addWidget(self.rename_radio)
-        card_layout.addWidget(self.skip_radio)
-        card_layout.addWidget(self.replace_radio)
-        
-        # Save button
-        save_btn = PushButton("Save")
-        save_btn.setMinimumWidth(100)
-        save_btn.clicked.connect(self._save_duplicate_handling)
-        card_layout.addWidget(save_btn)
-        
-        return card
-
-    def _save_duplicate_handling(self) -> None:
-        """Save duplicate handling preference."""
-        if self.rename_radio.isChecked():
-            strategy = "rename"
-        elif self.skip_radio.isChecked():
-            strategy = "skip"
-        elif self.replace_radio.isChecked():
-            strategy = "replace"
-        else:
-            strategy = "rename"
-        
-        self.config.set("duplicate_handling", strategy)
-        QMessageBox.information(None, "Saved", f"Duplicate handling set to: {strategy}")
-
-    def _create_size_filter_settings_card(self) -> CardWidget:
-        """Create card for file size filter default settings."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 12, 12, 12)
-        card_layout.setSpacing(12)
-        
-        card_layout.addWidget(BodyLabel("File Size Filter Defaults"))
-        
-        # Enable filter checkbox
-        self.settings_enable_filter = CheckBox("Enable size filter by default")
-        self.settings_enable_filter.setChecked(self.config.get("enable_size_filter", False))
-        card_layout.addWidget(self.settings_enable_filter)
-        
-        # Min size setting
-        min_layout = QHBoxLayout()
-        min_label = BodyLabel("Default Minimum Size (KB):")
-        min_label.setMinimumWidth(200)
-        self.settings_min_size = DoubleSpinBox()
-        self.settings_min_size.setRange(0, 999999999)
-        self.settings_min_size.setValue(self.config.get("min_file_size_kb", 0))
-        self.settings_min_size.setDecimals(2)
-        self.settings_min_size.setSingleStep(1)
-        self.settings_min_size.setMinimumWidth(150)
-        min_layout.addWidget(min_label)
-        min_layout.addWidget(self.settings_min_size)
-        min_layout.addStretch()
-        card_layout.addLayout(min_layout)
-        
-        # Max size setting
-        max_layout = QHBoxLayout()
-        max_label = BodyLabel("Default Maximum Size (KB):")
-        max_label.setMinimumWidth(200)
-        self.settings_max_size = DoubleSpinBox()
-        self.settings_max_size.setRange(0, 999999999)
-        self.settings_max_size.setValue(self.config.get("max_file_size_kb", 0))
-        self.settings_max_size.setDecimals(2)
-        self.settings_max_size.setSingleStep(1)
-        self.settings_max_size.setMinimumWidth(150)
-        max_layout.addWidget(max_label)
-        max_layout.addWidget(self.settings_max_size)
-        max_layout.addStretch()
-        card_layout.addLayout(max_layout)
-        
-        # Save button
-        save_btn = PushButton("Save")
-        save_btn.setMinimumWidth(100)
-        save_btn.clicked.connect(self._save_size_filter_settings)
-        card_layout.addWidget(save_btn)
-        
-        return card
-    
-    def _save_size_filter_settings(self) -> None:
-        """Save file size filter settings."""
-        enable_filter = self.settings_enable_filter.isChecked()
-        min_size = self.settings_min_size.value()
-        max_size = self.settings_max_size.value()
-        
-        self.config.set("enable_size_filter", enable_filter)
-        self.config.set("min_file_size_kb", min_size)
-        self.config.set("max_file_size_kb", max_size)
-        
-        QMessageBox.information(None, "Saved", "File size filter settings saved successfully!")
-
-    def _create_log_export_card(self) -> CardWidget:
-        """Create card for activity log export directory settings."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 12, 12, 12)
-        card_layout.setSpacing(12)
-        
-        card_layout.addWidget(BodyLabel("Activity Log Export"))
-        
-        # Export directory setting
-        dir_layout = QHBoxLayout()
-        dir_label = BodyLabel("Default Export Directory:")
-        dir_label.setMinimumWidth(200)
-        self.log_export_dir_input = LineEdit()
-        self.log_export_dir_input.setPlaceholderText("Select directory for log exports")
-        self.log_export_dir_input.setText(self.config.get("log_export_directory", str(Path.home())))
-        dir_layout.addWidget(dir_label)
-        dir_layout.addWidget(self.log_export_dir_input, 1)
-        
-        browse_btn = PushButton("Browse")
-        browse_btn.setMaximumWidth(100)
-        browse_btn.clicked.connect(self._browse_log_export_dir)
-        dir_layout.addWidget(browse_btn)
-        card_layout.addLayout(dir_layout)
-        
-        # Save button
-        save_btn = PushButton("Save")
-        save_btn.setMinimumWidth(100)
-        save_btn.clicked.connect(self._save_log_export_settings)
-        card_layout.addWidget(save_btn)
-        
-        return card
-    
-    def _browse_log_export_dir(self) -> None:
-        """Browse for log export directory."""
-        folder = QFileDialog.getExistingDirectory(None, "Select Log Export Directory")
-        if folder:
-            self.log_export_dir_input.setText(folder)
-    
-    def _save_log_export_settings(self) -> None:
-        """Save log export directory settings."""
-        export_dir = self.log_export_dir_input.text().strip()
-        
-        if export_dir and not Path(export_dir).exists():
-            QMessageBox.warning(None, "Invalid Directory", "The specified directory does not exist.")
-            return
-        
-        if not export_dir:
-            export_dir = str(Path.home())
-        
-        self.config.set("log_export_directory", export_dir)
-        QMessageBox.information(None, "Saved", "Log export directory saved successfully!")
-
-    def _create_custom_categories_card(self) -> CardWidget:
-        """Create card for managing custom file categories."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(12, 12, 12, 12)
-        card_layout.setSpacing(12)
-
-        card_layout.addWidget(BodyLabel("Custom Categories"))
-
-        # List widget to show categories and their extensions
-        self.categories_list = QListWidget()
-        self._refresh_custom_categories_list()
-        card_layout.addWidget(self.categories_list, 1)
-
-        btn_layout = QHBoxLayout()
-
-        add_btn = PushButton("Add Category")
-        add_btn.setMinimumWidth(120)
-        add_btn.clicked.connect(self._add_custom_category)
-        btn_layout.addWidget(add_btn)
-
-        remove_btn = PushButton("Remove Selected")
-        remove_btn.setMinimumWidth(120)
-        remove_btn.clicked.connect(self._remove_custom_category)
-        btn_layout.addWidget(remove_btn)
-        
-        btn_layout.addStretch()
-        card_layout.addLayout(btn_layout)
-
-        return card
-
-    def _refresh_custom_categories_list(self) -> None:
-        """Refresh the list widget with current categories and extensions."""
-        self.categories_list.clear()
-        custom_cats = self.config.get_custom_categories()
-        for name, extensions in custom_cats.items():
-            exts_str = ", ".join(extensions)
-            self.categories_list.addItem(f"{name}: {exts_str}")
-
-    def _add_custom_category(self) -> None:
-        """Prompt user to add a custom category"""
-        # Get category name
-        name, ok = QInputDialog.getText(None, "Add Custom Category", "Category Name:")
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-
-        # Get extensions comma-separated
-        exts, ok = QInputDialog.getText(None, "Add Extensions",
-                                       "List extensions separated by commas (e.g. pdf,docx,txt):")
-        if not ok or not exts.strip():
-            return
-        
-        extensions = [ext.strip().lstrip(".").lower() for ext in exts.split(",") if ext.strip()]
-        if not extensions:
-            QMessageBox.warning(None, "Invalid Input", "No valid extensions provided.")
-            return
-
-        # Add to config
-        self.config.add_custom_category(name, extensions)
-        self._refresh_custom_categories_list()
-
-    def _remove_custom_category(self) -> None:
-        """Remove selected custom category"""
-        selected = self.categories_list.selectedItems()
-        if not selected:
-            QMessageBox.warning(None, "Remove Category", "Select a category to remove.")
-            return
-        
-        item_text = selected[0].text()
-        # Extract category name before ":"
-        category_name = item_text.split(":", 1)[0].strip()
-        
-        reply = QMessageBox.question(None, "Confirm Removal",
-                                     f"Remove custom category '{category_name}'?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                     QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            self.config.remove_custom_category(category_name)
-            self._refresh_custom_categories_list()
-
-    def _save_persistent_paths(self) -> None:
-        """Save persistent folder paths to config"""
-        src = (self.src_input.text() or "").strip()
-        dst = (self.dst_input.text() or "").strip()
-        auto_save = self.auto_save_cb.isChecked()
-        
-        self.config.set("last_source_folder", src)
-        self.config.set("last_destination_folder", dst)
-        self.config.set("auto_save_paths", auto_save)
-        
-        QMessageBox.information(None, "Saved", "Settings saved successfully!")
-
-
-class ChangelogsPage:
-    """Changelogs page showing version history"""
-    
-    def __init__(self) -> None:
-        """Initialize changelogs page"""
-        pass
-    
-    def create(self) -> QWidget:
-        """Create changelogs page widget
-        
-        Returns:
-            Changelogs page widget
-        """
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-        
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
-        
-        layout.addWidget(TitleLabel("Changelogs"))
-        
-        # Version 2.7.1
-        layout.addWidget(self._create_version_card("2.7.1", "November 2025", [
-            "Improved code documentation across all modules",
-        ]))
-        
-        # Version 2.7.0
-        layout.addWidget(self._create_version_card("2.7.0", "November 2025", [
-            "Added export activity log feature",
-            "Configurable log export directory in settings",
-        ]))
-        
-        # Version 2.6.0
-        layout.addWidget(self._create_version_card("2.6.0", "November 2025", [
-            "Added file size filter feature",
-            "Set minimum and maximum file size limits (in KB)",
-            "Skip files that don't meet size criteria",
-        ]))
-        
-        # Version 2.5.0
-        layout.addWidget(self._create_version_card("2.5.0", "November 2025", [
-            "Added duplicate file handling options can be configured in settings",
-            "Choose between rename, skip, or replace duplicates",
-        ]))
-
-        # Version 2.4.0
-        layout.addWidget(self._create_version_card("2.4.0", "November 2025", [
-            "Added custom categories support",
-            "Allows users to add and remove custom file categories"
-        ]))
-
-        # Version 2.3.0
-        layout.addWidget(self._create_version_card("2.3.0", "November 2025", [
-            "Fixed nested folder organization",
-            "Auto-cleanup empty folders after moving files",
-            "Recursive file scanning in subdirectories",
-        ]))
-
-        # Version 2.2.0
-        layout.addWidget(self._create_version_card("2.2.0", "November 2025", [
-            "Added Settings tab with persistent folder paths",
-            "Added About & Changelogs pages",
-            "Auto-save feature for last used folders",
-        ]))
-        
-        # Version 2.1.0
-        layout.addWidget(self._create_version_card("2.1.0", "November 2025", [
-            "Added file preview before organizing",
-            "Added undo feature",
-            "Color-coded activity log",
-            "Drag & drop for folders",
-        ]))
-        
-        # Version 2.0.0
-        layout.addWidget(self._create_version_card("2.0.0", "November 2025", [
-            "Complete UI redesign with dark theme",
-            "Multi-tab interface",
-            "File organization by category",
-        ]))
-        
-        # Version 1.0.0
-        layout.addWidget(self._create_version_card("1.0.0", "November 2025", [
-            "Initial release",
-        ]))
-        
-        layout.addStretch()
-        
-        scroll.setWidget(widget)
-        return scroll
-    
-    def _create_version_card(self, version: str, date: str, changes: list) -> CardWidget:
-        """Create version card with changelog."""
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(12)
-        
-        # Version header
-        version_layout = QHBoxLayout()
-        version_label = TitleLabel(f"v{version}")
-        date_label = BodyLabel(date)
-        date_label.setStyleSheet("color: #999999; font-size: 11px;")
-        version_layout.addWidget(version_label)
-        version_layout.addStretch()
-        version_layout.addWidget(date_label)
-        card_layout.addLayout(version_layout)
-        
-        # Changes list
-        for change in changes:
-            card_layout.addWidget(BodyLabel(f"• {change}"))
-        
-        return card
-
-
-class OrganizePage:
-    """File organization page with source/dest/category inputs and live log."""
-    
-    def __init__(
-        self,
-        on_organize,
-        on_browse_source,
-        on_browse_dest,
-        on_clear_log,
-        on_undo=None,
-        on_preview=None,
-        on_export_log=None,
-    ) -> None:
-        """Initialize organize page with callbacks."""
-        self.on_organize = on_organize
-        self.on_browse_source = on_browse_source
-        self.on_browse_dest = on_browse_dest
-        self.on_clear_log = on_clear_log
-        self.on_undo = on_undo or (lambda: None)
-        self.on_preview = on_preview or (lambda: None)
-        self.on_export_log = on_export_log or (lambda: None)
-
-    def create(self) -> QWidget:
-        """Create organize page widget"""
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
-
-        layout.addWidget(TitleLabel("Organize Files"))
-        layout.addWidget(self._create_source_card())
-        layout.addWidget(self._create_dest_card())
-        layout.addWidget(self._create_category_card())
-        layout.addWidget(self._create_size_filter_card())
-        layout.addWidget(self._create_log_card())
-        layout.addLayout(self._create_button_layout())
-        layout.addStretch()
-
-        scroll.setWidget(widget)
-        self.root_widget = scroll
-        return scroll
-
-    def _create_source_card(self) -> CardWidget:
-        """Create source folder selection card with drag-drop support"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        label_layout = QHBoxLayout()
-        label_layout.addWidget(BodyLabel("Source Folder"))
-        
-        hint_label = BodyLabel("📁 Drag & drop supported")
-        hint_label.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: 500;")
-        label_layout.addStretch()
-        label_layout.addWidget(hint_label)
-        layout.addLayout(label_layout)
-
-        input_layout = QHBoxLayout()
-        self.source_input = DragDropLineEdit()
-        self.source_input.setObjectName("source_input")
-        self.source_input.setPlaceholderText("Select or drag source folder...")
-        input_layout.addWidget(self.source_input, 1)
-
-        browse_btn = PushButton("Browse")
-        browse_btn.setMaximumWidth(100)
-        browse_btn.clicked.connect(self.on_browse_source)
-        input_layout.addWidget(browse_btn)
-
-        layout.addLayout(input_layout)
-        return card
-
-    def _create_dest_card(self) -> CardWidget:
-        """Create destination folder selection card with drag-drop support"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        label_layout = QHBoxLayout()
-        label_layout.addWidget(BodyLabel("Destination Folder"))
-        
-        hint_label = BodyLabel("📁 Drag & drop supported")
-        hint_label.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: 500;")
-        label_layout.addStretch()
-        label_layout.addWidget(hint_label)
-        layout.addLayout(label_layout)
-
-        input_layout = QHBoxLayout()
-        self.dest_input = DragDropLineEdit()
-        self.dest_input.setObjectName("dest_input")
-        self.dest_input.setPlaceholderText("Select or drag destination folder...")
-        input_layout.addWidget(self.dest_input, 1)
-
-        browse_btn = PushButton("Browse")
-        browse_btn.setMaximumWidth(100)
-        browse_btn.clicked.connect(self.on_browse_dest)
-        input_layout.addWidget(browse_btn)
-
-        layout.addLayout(input_layout)
-        return card
-
-    def _create_category_card(self) -> CardWidget:
-        """Create file category selection card"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
-
-        layout.addWidget(BodyLabel("File Categories"))
-
-        check_layout = QHBoxLayout()
-        self.category_checks: dict = {}
-
-        for cat in FileCategory:
-            if cat.name != "OTHERS":
-                check = CheckBox(cat.value)
-                check.setChecked(True)
-                self.category_checks[cat] = check
-                check_layout.addWidget(check)
-
-        check_layout.addStretch()
-        layout.addLayout(check_layout)
-        return card
-    
-    def _create_size_filter_card(self) -> CardWidget:
-        """Create file size filter card"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
-        
-        # Header with enable checkbox
-        header_layout = QHBoxLayout()
-        self.enable_size_filter_check = CheckBox("Enable File Size Filter")
-        self.enable_size_filter_check.setChecked(False)
-        self.enable_size_filter_check.toggled.connect(self._toggle_size_filter)
-        header_layout.addWidget(self.enable_size_filter_check)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
-        
-        # Min/Max size inputs
-        size_layout = QHBoxLayout()
-        
-        # Min size
-        min_layout = QVBoxLayout()
-        min_layout.addWidget(BodyLabel("Minimum Size (KB)"))
-        self.min_size_input = DoubleSpinBox()
-        self.min_size_input.setRange(0, 999999999)
-        self.min_size_input.setValue(0)
-        self.min_size_input.setDecimals(2)
-        self.min_size_input.setSingleStep(1)
-        self.min_size_input.setMinimumWidth(150)
-        self.min_size_input.setEnabled(False)
-        min_layout.addWidget(self.min_size_input)
-        size_layout.addLayout(min_layout)
-        
-        size_layout.addSpacing(20)
-        
-        # Max size
-        max_layout = QVBoxLayout()
-        max_layout.addWidget(BodyLabel("Maximum Size (KB)"))
-        self.max_size_input = DoubleSpinBox()
-        self.max_size_input.setRange(0, 999999999)
-        self.max_size_input.setValue(0)
-        self.max_size_input.setDecimals(2)
-        self.max_size_input.setSingleStep(1)
-        self.max_size_input.setMinimumWidth(150)
-        self.max_size_input.setEnabled(False)
-        max_layout.addWidget(self.max_size_input)
-        size_layout.addLayout(max_layout)
-        
-        size_layout.addStretch()
-        layout.addLayout(size_layout)
-        
-        return card
-    
-    def _toggle_size_filter(self, enabled: bool) -> None:
-        """Enable/disable size filter inputs"""
-        self.min_size_input.setEnabled(enabled)
-        self.max_size_input.setEnabled(enabled)
-
-    def _create_log_card(self) -> CardWidget:
-        """Create activity log card"""
-        card = CardWidget()
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        layout.addWidget(BodyLabel("Activity Log"))
-
-        self.log_text = ColoredPlainTextEdit()
-        layout.addWidget(self.log_text, 1)
-
-        return card
-
-    def _create_button_layout(self) -> QHBoxLayout:
-        """Create action button layout"""
-        layout = QHBoxLayout()
-        layout.setSpacing(8)
-
-        # Preview button
-        preview_btn = PushButton("Preview")
-        preview_btn.setMinimumWidth(80)
-        preview_btn.clicked.connect(self.on_preview)
-        layout.addWidget(preview_btn)
-
-        # Organize button
-        self.organize_btn = PushButton("Organize Files")
-        self.organize_btn.setMinimumWidth(120)
-        self.organize_btn.clicked.connect(self.on_organize)
-        layout.addWidget(self.organize_btn)
-
-        # Undo button
-        self.undo_btn = PushButton("Undo")
-        self.undo_btn.setMinimumWidth(80)
-        self.undo_btn.setEnabled(False)
-        self.undo_btn.clicked.connect(self.on_undo)
-        layout.addWidget(self.undo_btn)
-
-        # Clear Log button
-        clear_btn = PushButton("Clear Log")
-        clear_btn.setMinimumWidth(100)
-        clear_btn.clicked.connect(self.on_clear_log)
-        layout.addWidget(clear_btn)
-        
-        # Export Log button
-        export_btn = PushButton("Export Log")
-        export_btn.setMinimumWidth(100)
-        export_btn.clicked.connect(self.on_export_log)
-        layout.addWidget(export_btn)
-
-        layout.addStretch()
-        return layout
-
-    def set_undo_enabled(self, enabled: bool) -> None:
-        """Enable or disable undo button"""
-        if hasattr(self, 'undo_btn'):
-            self.undo_btn.setEnabled(enabled)
-
-    def set_buttons_enabled(self, enabled: bool) -> None:
-        """Enable or disable organize and undo buttons during processing"""
-        if hasattr(self, 'organize_btn'):
-            self.organize_btn.setEnabled(enabled)
-
-    def get_source(self) -> str:
-        """Get source folder path"""
-        return self.source_input.text()
-
-    def get_destination(self) -> str:
-        """Get destination folder path"""
-        return self.dest_input.text()
-
-    def get_active_categories(self) -> list:
-        """Get selected categories"""
-        return [cat for cat, check in self.category_checks.items() if check.isChecked()]
-    
-    def get_size_filter_settings(self) -> dict:
-        """Get size filter settings"""
-        return {
-            'enabled': self.enable_size_filter_check.isChecked(),
-            'min_size_kb': self.min_size_input.value(),
-            'max_size_kb': self.max_size_input.value()
-        }
-
-    def append_log(self, message: str) -> None:
-        """Append colored message to log"""
-        self.log_text.append_colored(message)
-
-    def clear_log(self) -> None:
-        """Clear log display"""
-        self.log_text.clear()
-    
-    def get_log_content(self) -> str:
-        """Get current log content as plain text"""
-        return self.log_text.toPlainText()
-
-
-class AboutPage:
-    """About page with project information and credits"""
-    
-    def __init__(self) -> None:
-        """Initialize about page"""
-        pass
-    
-    def create(self) -> QWidget:
-        """Create about page widget
-        
-        Returns:
-            About page widget
-        """
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
-        
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
-        
-        layout.addWidget(TitleLabel("About"))
-        
-        # App Info Card
-        layout.addWidget(self._create_app_info_card())
-        
-        # Credits Card
-        layout.addWidget(self._create_credits_card())
-        
-        layout.addStretch()
-        
-        scroll.setWidget(widget)
-        return scroll
-    
-    def _create_app_info_card(self) -> CardWidget:
-        """Create app information card
-        
-        Returns:
-            App info card widget
-        """
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(12)
-        
-        # Title
-        card_layout.addWidget(TitleLabel("File Organizer"))
-        
-        # Version
-        version_layout = QHBoxLayout()
-        version_label = BodyLabel("Version:")
-        version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.7.1")
-        version_layout.addWidget(version_label)
-        version_layout.addWidget(version_value)
-        version_layout.addStretch()
-        card_layout.addLayout(version_layout)
-        
-        # Release Date
-        date_layout = QHBoxLayout()
-        date_label = BodyLabel("Release Date:")
-        date_label.setStyleSheet("font-weight: 500;")
-        date_value = BodyLabel("November 2025")
-        date_layout.addWidget(date_label)
-        date_layout.addWidget(date_value)
-        date_layout.addStretch()
-        card_layout.addLayout(date_layout)
-        
-        # Description
-        description = BodyLabel("An open source project for organizing files by category. Helps you keep your files organized and easy to find.")
-        description.setWordWrap(True)
-        card_layout.addWidget(description)
-        
-        # GitHub Link
-        github_layout = QHBoxLayout()
-        github_label = BodyLabel("Repository:")
-        github_label.setStyleSheet("font-weight: 500;")
-        github_link = BodyLabel("https://github.com/franklinnolasco7/FileOrganizer")
-        github_link.setStyleSheet("color: #0078D4; text-decoration: underline;")
-        github_layout.addWidget(github_label)
-        github_layout.addWidget(github_link)
-        github_layout.addStretch()
-        card_layout.addLayout(github_layout)
-        
-        return card
-    
-    def _create_credits_card(self) -> CardWidget:
-        """Create credits card
-        
-        Returns:
-            Credits card widget
-        """
-        card = CardWidget()
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(12)
-        
-        card_layout.addWidget(TitleLabel("Credits"))
-        
-        # Developer
-        dev_layout = QHBoxLayout()
-        dev_label = BodyLabel("Developer:")
-        dev_label.setStyleSheet("font-weight: 500;")
-        dev_name = BodyLabel("Franklin Nolasco")
-        dev_layout.addWidget(dev_label)
-        dev_layout.addWidget(dev_name)
-        dev_layout.addStretch()
-        card_layout.addLayout(dev_layout)
-        
-        # Framework
-        framework_layout = QHBoxLayout()
-        framework_label = BodyLabel("Framework:")
-        framework_label.setStyleSheet("font-weight: 500;")
-        framework_value = BodyLabel("PyQt6")
-        framework_layout.addWidget(framework_label)
-        framework_layout.addWidget(framework_value)
-        framework_layout.addStretch()
-        card_layout.addLayout(framework_layout)
-        
-        # UI Theme
-        theme_layout = QHBoxLayout()
-        theme_label = BodyLabel("UI Theme:")
-        theme_label.setStyleSheet("font-weight: 500;")
-        theme_value = BodyLabel("qfluentwidgets")
-        theme_layout.addWidget(theme_label)
-        theme_layout.addWidget(theme_value)
-        theme_layout.addStretch()
-        card_layout.addLayout(theme_layout)
-        
-        # Type
-        type_layout = QHBoxLayout()
-        type_label = BodyLabel("Type:")
-        type_label.setStyleSheet("font-weight: 500;")
-        type_value = BodyLabel("Open Source")
-        type_layout.addWidget(type_label)
-        type_layout.addWidget(type_value)
-        type_layout.addStretch()
-        card_layout.addLayout(type_layout)
-        
-        return card
-
+from app.ui.widgets import DragDropLineEdit, ColoredPlainTextEdit, PreviewDialog
+from app.ui.pages import SettingsPage, RecoveryManagerPage, ChangelogsPage, OrganizePage, AboutPage
 
 class FileOrganizerWindow(QMainWindow):
     """Main application window with navigation and page routing"""
@@ -1225,9 +51,44 @@ class FileOrganizerWindow(QMainWindow):
         self.organizer = file_organizer
         self.config = config
         self.logger = logger
+        
+        # Safety flags to prevent concurrent operations
+        self.is_organizing = False
+        self.is_previewing = False
 
-        setTheme(Theme.DARK)
+        # Store current theme (already set in main())
+        saved_theme = self.config.get("theme", "dark")
+        self.current_theme = Theme.LIGHT if saved_theme == "light" else Theme.DARK
+        
         self._setup_ui()
+        
+        # Apply window background theme after UI is setup
+        self._apply_window_theme()
+        
+        # Force widget updates to ensure theme colors apply properly
+        QApplication.processEvents()
+        self.update()
+        self.repaint()
+
+    def _show_info_bar(self, title: str, content: str, position=InfoBarPosition.TOP, error: bool = False) -> None:
+        """Helper method to show InfoBar with consistent styling
+        
+        Args:
+            title: InfoBar title
+            content: InfoBar content message
+            position: Position of the InfoBar (default: TOP)
+            error: If True, shows error InfoBar; otherwise shows success InfoBar
+        """
+        info_bar_func = InfoBar.error if error else InfoBar.success
+        info_bar_func(
+            title=title,
+            content=content,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=position,
+            duration=3000,
+            parent=self
+        )
 
     def _setup_ui(self) -> None:
         """Setup main UI structure"""
@@ -1236,7 +97,6 @@ class FileOrganizerWindow(QMainWindow):
         self._center_window()
 
         self.stacked_widget = QStackedWidget()
-
         self.nav = NavigationInterface(self)
         self.nav.setCollapsible(True)
         self.nav.setExpandWidth(250)
@@ -1253,37 +113,95 @@ class FileOrganizerWindow(QMainWindow):
         )
         self.organize_page = self.organize_page_obj.create()
 
+        # Create Recovery Manager Page
+        self.recovery_page_obj = RecoveryManagerPage(self.config, self.logger, parent=self)
+        self.recovery_page = self.recovery_page_obj.create()
+
         # Create Changelogs Page
-        changelogs_page = ChangelogsPage().create()
+        self.changelogs_page_obj = ChangelogsPage()
+        changelogs_page = self.changelogs_page_obj.create()
 
         # Create Settings Page
-        self.settings_page_obj = SettingsPage(self.config, on_close=self._return_to_organize)
+        self.settings_page_obj = SettingsPage(self.config, on_close=self._return_to_organize, parent=self)
         self.settings_page = self.settings_page_obj.create()
 
         # Create About Page
-        about_page = AboutPage().create()
+        self.about_page_obj = AboutPage(parent=self)
+        about_page = self.about_page_obj.create()
 
         # Add all pages to stack widget
-        self.stacked_widget.addWidget(self.organize_page)  # Index 0
-        self.stacked_widget.addWidget(changelogs_page)  # Index 1
-        self.stacked_widget.addWidget(self.settings_page)  # Index 2
-        self.stacked_widget.addWidget(about_page)  # Index 3
+        self.stacked_widget.addWidget(self.organize_page)
+        self.stacked_widget.addWidget(self.recovery_page)
+        self.stacked_widget.addWidget(changelogs_page)
+        self.stacked_widget.addWidget(self.settings_page)
+        self.stacked_widget.addWidget(about_page)
 
         # Add navigation items
-        self.nav.addItem(routeKey="organize", icon=FIF.FOLDER, text="Organize",
-                        onClick=lambda: self.stacked_widget.setCurrentIndex(0))
-
-        self.nav.addItem(routeKey="changelogs", icon=FIF.HISTORY, text="Changelogs",
-                        onClick=lambda: self.stacked_widget.setCurrentIndex(1))
-
-        self.nav.addItem(routeKey="settings", icon=FIF.SETTING, text="Settings",
-                        onClick=lambda: self.stacked_widget.setCurrentIndex(2))
-
-        self.nav.addItem(routeKey="about", icon=FIF.INFO, text="About",
-                        onClick=lambda: self.stacked_widget.setCurrentIndex(3))
+        nav_items = [
+            {
+                "routeKey": "organize",
+                "icon": FIF.FOLDER,
+                "text": "Organize",
+                "onClick": lambda: self.stacked_widget.setCurrentIndex(0),
+                "tooltip": "Organize your files into categories"
+            },
+            {
+                "routeKey": "recovery",
+                "icon": FIF.SYNC,
+                "text": "Recovery",
+                "onClick": lambda: self.stacked_widget.setCurrentIndex(1),
+                "tooltip": "View and restore from backups"
+            },
+            {
+                "routeKey": "changelogs",
+                "icon": FIF.HISTORY,
+                "text": "Changelogs",
+                "onClick": lambda: self.stacked_widget.setCurrentIndex(2),
+                "tooltip": "View version history and updates"
+            },
+            {
+                "routeKey": "about",
+                "icon": FIF.INFO,
+                "text": "About",
+                "onClick": lambda: self.stacked_widget.setCurrentIndex(4),
+                "tooltip": "About this application"
+            }
+        ]
+        
+        # Add main navigation items
+        for item in nav_items:
+            self.nav.addItem(
+                routeKey=item["routeKey"],
+                icon=item["icon"],
+                text=item["text"],
+                onClick=item["onClick"],
+                tooltip=item["tooltip"]
+            )
+        
+        # Add bottom navigation items
+        bottom_items = [
+            {
+                "routeKey": "settings",
+                "icon": FIF.SETTING,
+                "text": "Settings",
+                "onClick": lambda: self.stacked_widget.setCurrentIndex(3),
+                "tooltip": "Configure application settings"
+            }
+        ]
+        
+        for item in bottom_items:
+            self.nav.addItem(
+                routeKey=item["routeKey"],
+                icon=item["icon"],
+                text=item["text"],
+                onClick=item["onClick"],
+                position=NavigationItemPosition.BOTTOM,
+                tooltip=item["tooltip"]
+            )
 
         # Setup main layout
         main_widget = QWidget()
+        main_widget.setObjectName("centralWidget")
         layout = QHBoxLayout(main_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1299,6 +217,16 @@ class FileOrganizerWindow(QMainWindow):
 
         # Subscribe to logger
         self.logger.subscribe(self._on_log_message)
+        
+        # Apply initial theme to sublabels
+        self.organize_page_obj.apply_hint_label_theme()
+        self.changelogs_page_obj.apply_date_label_theme()
+        
+        # Force update all pages to ensure proper theme rendering
+        for i in range(self.stacked_widget.count()):
+            page = self.stacked_widget.widget(i)
+            if page:
+                page.update()
 
     def _center_window(self) -> None:
         """Center window on screen"""
@@ -1332,24 +260,239 @@ class FileOrganizerWindow(QMainWindow):
         """Return from settings to organize page."""
         self.stacked_widget.setCurrentWidget(self.organize_page)
 
+    def _apply_window_theme(self) -> None:
+        """Apply theme-aware background color to the main window and content areas"""
+        # Improved color palette for better UI/UX with enhanced contrast
+        if self.current_theme == Theme.LIGHT:
+            # Light mode: Better contrast for visible borders and outlines
+            main_bg = "rgb(243, 244, 246)"        # Light gray background
+            page_bg = "rgb(250, 250, 251)"        # Slightly off-white for content
+            nav_bg = "rgb(248, 249, 250)"         # Very subtle gray for navigation
+            border_color = "rgb(229, 231, 235)"   # Visible border color
+            card_bg = "rgb(255, 255, 255)"        # Pure white for cards to stand out
+            card_hover_bg = "rgb(245, 246, 247)"  # More noticeable hover - medium gray
+            shadow = "rgba(0, 0, 0, 0.05)"        # Subtle shadow for depth
+        else:
+            # Dark mode: Comfortable dark grays
+            main_bg = "rgb(32, 33, 36)"           # Modern dark gray
+            page_bg = "rgb(32, 33, 36)"           # Same as main for consistency
+            nav_bg = "rgb(45, 46, 49)"            # Slightly lighter for navigation
+            border_color = "rgb(60, 63, 68)"      # Dark mode border
+            card_bg = "rgb(38, 39, 43)"           # Slightly lighter for cards
+            card_hover_bg = "rgb(48, 49, 53)"     # More noticeable hover - lighter
+            shadow = "rgba(0, 0, 0, 0.3)"         # Stronger shadow in dark mode
+        
+        # Apply comprehensive styling for smooth theme experience
+        self.setStyleSheet(f"""
+            /* Main window background */
+            QMainWindow {{
+                background-color: {main_bg};
+            }}
+            
+            /* Central widget (contains nav + content) */
+            QWidget#centralWidget {{
+                background-color: {main_bg};
+            }}
+            
+            /* Content area */
+            QStackedWidget {{
+                background-color: {page_bg};
+                border-radius: 0px;
+            }}
+            
+            /* Smooth scroll areas */
+            SmoothScrollArea {{
+                background-color: {page_bg};
+                border: none;
+            }}
+            
+            QWidget#pageScrollArea {{
+                background-color: {page_bg};
+                border: none;
+            }}
+            
+            QWidget#pageContentWidget {{
+                background-color: {page_bg};
+            }}
+            
+            /* Enhanced card styling for better visibility */
+            CardWidget {{
+                background-color: {card_bg};
+                border: 1px solid {border_color};
+                border-radius: 8px;
+            }}
+            
+            CardWidget:hover {{
+                background-color: {card_hover_bg};
+                border: 1px solid {border_color};
+            }}
+            
+            /* Activity log text area - clearly visible border */
+            ColoredPlainTextEdit, PlainTextEdit#activityLogTextEdit {{
+                background-color: {card_bg};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+            
+            /* Line edits - subtle borders */
+            LineEdit {{
+                border: 1px solid {border_color};
+            }}
+            
+            /* List widgets - visible borders */
+            ListWidget {{
+                border: 1px solid {border_color};
+                background-color: {card_bg};
+            }}
+            
+            /* Dialog windows - theme-aware popups */
+            QDialog, QMessageBox, QInputDialog {{
+                background-color: {card_bg};
+            }}
+            
+            QMessageBox QLabel {{
+                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
+                background-color: transparent;
+            }}
+            
+            QInputDialog QLabel {{
+                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
+                background-color: transparent;
+            }}
+            
+            QInputDialog QLineEdit {{
+                background-color: {page_bg};
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                padding: 6px;
+                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
+            }}
+            
+            /* Dialog buttons - QPushButton styling */
+            QDialog QPushButton, QMessageBox QPushButton, QInputDialog QPushButton {{
+                background-color: {page_bg};
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                padding: 6px 16px;
+                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
+                min-width: 70px;
+            }}
+            
+            QDialog QPushButton:hover, QMessageBox QPushButton:hover, QInputDialog QPushButton:hover {{
+                background-color: {"rgb(240, 241, 243)" if self.current_theme == Theme.LIGHT else "rgb(48, 49, 53)"};
+                border: 1px solid {"rgb(200, 201, 205)" if self.current_theme == Theme.LIGHT else "rgb(70, 73, 78)"};
+            }}
+            
+            QDialog QPushButton:pressed, QMessageBox QPushButton:pressed, QInputDialog QPushButton:pressed {{
+                background-color: {"rgb(230, 231, 233)" if self.current_theme == Theme.LIGHT else "rgb(58, 59, 63)"};
+            }}
+            
+            /* Default/Primary button styling - matches qfluentwidgets accent color */
+            /* Using cyan to match CheckBox checkmarks and PrimaryPushButton */
+            QDialog QPushButton:default, QMessageBox QPushButton:default {{
+                background-color: rgb(0, 159, 170);
+                color: rgb(255, 255, 255);
+                border: 1px solid rgb(0, 159, 170);
+                font-weight: 500;
+            }}
+            
+            QDialog QPushButton:default:hover, QMessageBox QPushButton:default:hover {{
+                background-color: {"rgb(0, 139, 150)" if self.current_theme == Theme.LIGHT else "rgb(26, 173, 184)"};
+            }}
+            
+            QDialog QPushButton:default:pressed, QMessageBox QPushButton:default:pressed {{
+                background-color: {"rgb(0, 119, 130)" if self.current_theme == Theme.LIGHT else "rgb(0, 139, 150)"};
+            }}
+        """)
+
+    def _toggle_theme(self) -> None:
+        """Toggle between light and dark theme"""
+        # Toggle theme
+        if self.current_theme == Theme.DARK:
+            self.current_theme = Theme.LIGHT
+            theme_name = "light"
+        else:
+            self.current_theme = Theme.DARK
+            theme_name = "dark"
+        
+        # Apply theme to all qfluentwidgets components
+        # save=False because we manage our own config, lazy=False for immediate update
+        setTheme(self.current_theme, save=False, lazy=False)
+        
+        # Apply window background color
+        self._apply_window_theme()
+        
+        # Force complete widget tree update
+        self.update()
+        self.repaint()
+        if hasattr(self, 'nav'):
+            self.nav.update()
+        if hasattr(self, 'stacked_widget'):
+            self.stacked_widget.update()
+        
+        # Update log colors if log widget exists
+        if hasattr(self, 'organize_page_obj') and hasattr(self.organize_page_obj, 'log_text'):
+            self.organize_page_obj.log_text._update_colors()
+        
+        # Update hint labels in organize page
+        if hasattr(self, 'organize_page_obj'):
+            self.organize_page_obj.apply_hint_label_theme()
+        
+        # Update date labels in changelogs page
+        if hasattr(self, 'changelogs_page_obj'):
+            self.changelogs_page_obj.apply_date_label_theme()
+        
+        # Refresh custom categories styling if settings page exists
+        if hasattr(self, 'settings_page_obj') and hasattr(self.settings_page_obj, 'categories_layout'):
+            self.settings_page_obj._refresh_custom_categories_list()
+        
+        # Save preference to config
+        self.config.set("theme", theme_name)
+        
+        # Show notification
+        self._show_info_bar("Theme Changed", f"Switched to {theme_name.capitalize()} Mode")
+
     def _handle_preview(self) -> None:
         """Show preview of files to be organized."""
+        # Prevent concurrent operations
+        if self.is_organizing:
+            self._show_info_bar("Organization in Progress", "Please wait for the current organization to complete", InfoBarPosition.TOP)
+            return
+        
+        if self.is_previewing:
+            self._show_info_bar("Preview in Progress", "Please wait for the current preview to complete", InfoBarPosition.TOP)
+            return
+        
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
         size_filter = self.organize_page_obj.get_size_filter_settings()
 
         if not source or not Path(source).exists():
-            QMessageBox.warning(self, "Error", "Invalid source folder")
+            self._show_info_bar("Invalid Source", "Please select a valid source folder", InfoBarPosition.TOP, error=True)
             return
         if not destination:
-            QMessageBox.warning(self, "Error", "Select destination folder")
+            self._show_info_bar("No Destination", "Please select a destination folder", InfoBarPosition.TOP, error=True)
             return
         if not categories:
-            QMessageBox.warning(self, "Error", "Select at least one category")
+            self._show_info_bar("No Categories", "Please select at least one category", InfoBarPosition.TOP, error=True)
             return
+        
+        # Validate source and destination are not the same
+        try:
+            source_resolved = Path(source).resolve()
+            dest_resolved = Path(destination).resolve()
+            if source_resolved == dest_resolved:
+                self._show_info_bar("Invalid Folders", "Source and destination folders cannot be the same", InfoBarPosition.TOP, error=True)
+                return
+        except Exception:
+            pass  # If resolution fails, let the organizer handle it
 
         try:
+            self.is_previewing = True
+            self.organize_page_obj.set_buttons_enabled(False)
+            
             preview_data = self.organizer.preview_organization(
                 Path(source),
                 Path(destination),
@@ -1362,34 +505,62 @@ class FileOrganizerWindow(QMainWindow):
             if preview_data['total'] == 0:
                 msg = "No files found to organize"
                 if size_filter['enabled'] and preview_data.get('skipped_by_size', 0) > 0:
-                    msg += f"\n({preview_data['skipped_by_size']} files skipped by size filter)"
-                QMessageBox.information(self, "Preview", msg)
+                    msg += f" ({preview_data['skipped_by_size']} files skipped by size filter)"
+                self._show_info_bar("No Files", msg, InfoBarPosition.TOP)
                 return
 
             dialog = PreviewDialog(preview_data, self)
             dialog.exec()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Preview failed: {str(e)}")
+            self._show_info_bar("Preview Failed", str(e), InfoBarPosition.TOP, error=True)
+        finally:
+            self.is_previewing = False
+            self.organize_page_obj.set_buttons_enabled(True)
 
     def _handle_organize(self) -> None:
         """Handle organize action with validation"""
+        # Prevent concurrent operations
+        if self.is_organizing:
+            self._show_info_bar("Operation in Progress", "Please wait for the current organization to complete", InfoBarPosition.TOP)
+            return
+        
+        if self.is_previewing:
+            self._show_info_bar("Preview in Progress", "Please wait for the preview to complete", InfoBarPosition.TOP)
+            return
+        
         source = self.organize_page_obj.get_source()
         destination = self.organize_page_obj.get_destination()
         categories = self.organize_page_obj.get_active_categories()
         size_filter = self.organize_page_obj.get_size_filter_settings()
 
         if not source or not Path(source).exists():
-            QMessageBox.warning(self, "Error", "Invalid source folder")
+            self._show_info_bar("Invalid Source", "Please select a valid source folder", InfoBarPosition.TOP, error=True)
             return
         if not destination:
-            QMessageBox.warning(self, "Error", "Select destination folder")
+            self._show_info_bar("No Destination", "Please select a destination folder", InfoBarPosition.TOP, error=True)
             return
         if not categories:
-            QMessageBox.warning(self, "Error", "Select at least one category")
+            self._show_info_bar("No Categories", "Please select at least one category", InfoBarPosition.TOP, error=True)
             return
+        
+        # Validate source and destination are not the same
+        try:
+            source_resolved = Path(source).resolve()
+            dest_resolved = Path(destination).resolve()
+            if source_resolved == dest_resolved:
+                self._show_info_bar("Invalid Folders", "Source and destination folders cannot be the same", InfoBarPosition.TOP, error=True)
+                return
+            # Check if destination is inside source (would cause recursive issues)
+            if dest_resolved.is_relative_to(source_resolved):
+                self._show_info_bar("Invalid Folders", "Destination folder cannot be inside source folder", InfoBarPosition.TOP, error=True)
+                return
+        except Exception:
+            pass  # If resolution fails, let the organizer handle it
 
         try:
+            # Set organizing flag FIRST to prevent concurrent clicks
+            self.is_organizing = True
             self.organize_page_obj.set_buttons_enabled(False)
             
             stats = self.organizer.organize_folder(
@@ -1399,10 +570,6 @@ class FileOrganizerWindow(QMainWindow):
                 min_size_kb=size_filter['min_size_kb'],
                 max_size_kb=size_filter['max_size_kb'],
                 enable_size_filter=size_filter['enabled']
-            )
-            
-            self.organize_page_obj.set_undo_enabled(
-                self.organizer.history.can_undo()
             )
             
             # Auto-persist the paths used for this organization if auto-save enabled
@@ -1416,47 +583,85 @@ class FileOrganizerWindow(QMainWindow):
                 self.config.set("min_file_size_kb", size_filter['min_size_kb'])
                 self.config.set("max_file_size_kb", size_filter['max_size_kb'])
             
-            QMessageBox.information(
-                self, "Success",
-                f"Organization Complete!\n\nMoved: {stats['moved']}\n"
-                f"Errors: {stats['errors']}\nSkipped: {stats['skipped']}"
+            # Show results based on what happened
+            if stats['moved'] == 0 and stats['errors'] == 0 and stats['skipped'] > 0:
+                # No files were moved, only skipped (possibly already organized)
+                self._show_info_bar("No Files Organized", f"{stats['skipped']} files were skipped (no matching files or already organized)", InfoBarPosition.TOP)
+            elif stats['moved'] == 0 and stats['errors'] == 0 and stats['skipped'] == 0:
+                # Nothing happened at all
+                self._show_info_bar("No Files Found", "No files found to organize in the source folder", InfoBarPosition.TOP)
+            else:
+                # Show success dialog with stats
+                recovery_folder = self.config.get("recovery_backup_folder", str(Path.home() / "FileOrganizer_Recovery"))
+                w = MessageBox(
+                    "Success",
+                    f"Organization Complete!\n\n"
+                    f"Moved: {stats['moved']}\n"
+                    f"Errors: {stats['errors']}\n"
+                    f"Skipped: {stats['skipped']}\n\n"
+                    f"Recovery backup saved to:\n{recovery_folder}",
+                    self
+                )
+                w.cancelButton.hide()
+                w.yesButton.setText("OK")
+                w.exec()
+            
+            # Update undo button state AFTER checking results
+            # This ensures undo button reflects actual undoable operations
+            self.organize_page_obj.set_undo_enabled(
+                self.organizer.history.can_undo()
             )
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Organization failed: {str(e)}")
+            self._show_info_bar("Organization Failed", str(e), InfoBarPosition.TOP, error=True)
         finally:
+            self.is_organizing = False
             self.organize_page_obj.set_buttons_enabled(True)
 
     def _handle_undo(self) -> None:
         """Handle undo action with confirmation"""
-        if not self.organizer.history.can_undo():
-            QMessageBox.warning(self, "Undo", "No operations to undo")
+        # Prevent undo during organize or preview operations
+        if self.is_organizing:
+            self._show_info_bar("Organization in Progress", "Please wait for the current organization to complete", InfoBarPosition.TOP)
             return
         
-        reply = QMessageBox.question(
-            self,
+        if self.is_previewing:
+            self._show_info_bar("Preview in Progress", "Please wait for the preview to complete", InfoBarPosition.TOP)
+            return
+        
+        # Double-check if undo is available
+        if not self.organizer.history.can_undo():
+            self._show_info_bar("Nothing to Undo", "No operations available to undo", InfoBarPosition.TOP)
+            # Ensure button is disabled
+            self.organize_page_obj.set_undo_enabled(False)
+            return
+        
+        w = MessageBox(
             "Confirm Undo",
             "Are you sure you want to undo the last organization?\n"
             "Files will be moved back to their original locations.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            self
         )
+        w.yesButton.setText("Yes")
+        w.cancelButton.setText("No")
         
-        if reply == QMessageBox.StandardButton.Yes:
+        if w.exec():
             try:
                 stats = self.organizer.undo_last_operation()
                 
-                self.organize_page_obj.set_undo_enabled(
-                    self.organizer.history.can_undo()
-                )
+                # Update undo button state immediately after undo completes
+                can_undo = self.organizer.history.can_undo()
+                self.organize_page_obj.set_undo_enabled(can_undo)
                 
-                QMessageBox.information(
-                    self, "Undo Complete",
-                    f"Successfully restored {stats['restored']} files!\n"
-                    f"Errors: {stats['errors']}\n"
-                    f"Folders removed: {stats.get('folders_removed', 0)}"
+                # Show success with stats in InfoBar
+                self._show_info_bar(
+                    "Undo Complete",
+                    f"Restored {stats['restored']} files • {stats['errors']} errors • {stats.get('folders_removed', 0)} folders removed",
+                    InfoBarPosition.TOP
                 )
             except Exception as e:
-                QMessageBox.critical(self, "Undo Failed", f"Undo operation failed: {str(e)}")
+                self._show_info_bar("Undo Failed", str(e), InfoBarPosition.TOP, error=True)
+                # Update button state even on error
+                self.organize_page_obj.set_undo_enabled(self.organizer.history.can_undo())
 
     def _browse_source(self) -> None:
         """Browse source folder"""
@@ -1472,15 +677,29 @@ class FileOrganizerWindow(QMainWindow):
 
     def _clear_log(self) -> None:
         """Clear log"""
+        log_content = self.organize_page_obj.get_log_content()
+        
+        if not log_content.strip():
+            self._show_info_bar("Log Empty", "Activity log is already empty", InfoBarPosition.TOP)
+            return
+        
         self.organize_page_obj.clear_log()
+        
+        # Show success notification
+        self._show_info_bar("Log Cleared", "Activity log has been cleared")
     
     def _export_log(self) -> None:
         """Export activity log to timestamped text file"""
         log_content = self.organize_page_obj.get_log_content()
         
         if not log_content.strip():
-            QMessageBox.information(self, "Export Log", "Activity log is empty. Nothing to export.")
+            self._show_info_bar("Log Empty", "Activity log is empty. Nothing to export", InfoBarPosition.TOP)
             return
+        
+        # Clean up separator lines from log content
+        lines = log_content.split('\n')
+        cleaned_lines = [line for line in lines if not line.strip().startswith('═')]
+        log_content = '\n'.join(cleaned_lines)
         
         # Generate timestamped filename
         from datetime import datetime
@@ -1503,13 +722,14 @@ class FileOrganizerWindow(QMainWindow):
             try:
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(f"File Organizer Activity Log\n")
-                    f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write("=" * 80 + "\n\n")
+                    f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                     f.write(log_content)
                 
-                QMessageBox.information(self, "Export Successful", f"Activity log exported to:\n{file_path}")
+                # Get just the filename for cleaner message
+                filename = Path(file_path).name
+                self._show_info_bar("Export Successful", f"Log exported as {filename}", InfoBarPosition.TOP)
             except Exception as e:
-                QMessageBox.critical(self, "Export Failed", f"Failed to export log:\n{str(e)}")
+                self._show_info_bar("Export Failed", f"Failed to export: {str(e)}", InfoBarPosition.TOP, error=True)
 
     def _on_log_message(self, message: str) -> None:
         """Handle log message from logger"""
@@ -1518,16 +738,32 @@ class FileOrganizerWindow(QMainWindow):
 
 def main() -> None:
     """Application entry point"""
-    from app.config.config_manager import DEFAULT_CONFIG_SCHEMA
-    from app.services.file_service import FileService
-    from app.core.file_manager import FileManager
-
+    import sys
+    from pathlib import Path
+    from PyQt6.QtWidgets import QApplication
+    
+    # Create QApplication FIRST
     app = QApplication(sys.argv)
+    app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
+    
+    # NOW import everything else
+    from app.config.config_manager import DEFAULT_CONFIG_SCHEMA, ConfigManager
+    from app.services.file_service import FileService
+    from app.core.file_manager import FileManager, DuplicateHandlingStrategy
+    from app.core.file_organizer import FileOrganizer
+    from app.services.logger_service import LoggerService
+    from qfluentwidgets import setTheme, Theme
 
     logger = LoggerService(max_history=1000)
     
     config_file = Path.home() / ".file_organizer_config.json"
     config = ConfigManager(config_file, DEFAULT_CONFIG_SCHEMA)
+    
+    # Set theme BEFORE creating window
+    saved_theme = config.get("theme", "dark")
+    theme = Theme.LIGHT if saved_theme == "light" else Theme.DARK
+    # save=False because we manage config ourselves, lazy=False for immediate effect
+    setTheme(theme, save=False, lazy=False)
     
     # Get duplicate handling strategy from config
     strategy_str = config.get("duplicate_handling", "rename")
@@ -1540,7 +776,7 @@ def main() -> None:
     
     file_service = FileService()
     file_manager = FileManager(logger, duplicate_strategy=duplicate_strategy)
-    organizer = FileOrganizer(logger, file_service, file_manager)
+    organizer = FileOrganizer(logger, file_service, file_manager, config)
 
     window = FileOrganizerWindow(organizer, config, logger)
     window.show()
