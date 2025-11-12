@@ -328,4 +328,10 @@ DEFAULT_CONFIG_SCHEMA: Dict[str, ConfigSchema] = {
         default=False,
         description="Enable file size filtering"
     ),
+    "log_export_directory": ConfigSchema(
+        key="log_export_directory",
+        expected_type=str,
+        default=str(Path.home()),
+        description="Default directory for exporting activity logs"
+    ),
 }

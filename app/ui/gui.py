@@ -332,6 +332,7 @@ class SettingsPage:
         layout.addWidget(self._create_persistent_paths_card())
         layout.addWidget(self._create_duplicate_handling_card())
         layout.addWidget(self._create_size_filter_settings_card())
+        layout.addWidget(self._create_log_export_card())
         layout.addWidget(self._create_custom_categories_card())
         
         layout.addStretch()
@@ -505,6 +506,59 @@ class SettingsPage:
         
         QMessageBox.information(None, "Saved", "File size filter settings saved successfully!")
 
+    def _create_log_export_card(self) -> CardWidget:
+        """Create card for activity log export directory settings."""
+        card = CardWidget()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(12)
+        
+        card_layout.addWidget(BodyLabel("Activity Log Export"))
+        
+        # Export directory setting
+        dir_layout = QHBoxLayout()
+        dir_label = BodyLabel("Default Export Directory:")
+        dir_label.setMinimumWidth(200)
+        self.log_export_dir_input = LineEdit()
+        self.log_export_dir_input.setPlaceholderText("Select directory for log exports")
+        self.log_export_dir_input.setText(self.config.get("log_export_directory", str(Path.home())))
+        dir_layout.addWidget(dir_label)
+        dir_layout.addWidget(self.log_export_dir_input, 1)
+        
+        browse_btn = PushButton("Browse")
+        browse_btn.setMaximumWidth(100)
+        browse_btn.clicked.connect(self._browse_log_export_dir)
+        dir_layout.addWidget(browse_btn)
+        card_layout.addLayout(dir_layout)
+        
+        # Save button
+        save_btn = PushButton("Save")
+        save_btn.setMinimumWidth(100)
+        save_btn.clicked.connect(self._save_log_export_settings)
+        card_layout.addWidget(save_btn)
+        
+        return card
+    
+    def _browse_log_export_dir(self) -> None:
+        """Browse for log export directory."""
+        folder = QFileDialog.getExistingDirectory(None, "Select Log Export Directory")
+        if folder:
+            self.log_export_dir_input.setText(folder)
+    
+    def _save_log_export_settings(self) -> None:
+        """Save log export directory settings."""
+        export_dir = self.log_export_dir_input.text().strip()
+        
+        if export_dir and not Path(export_dir).exists():
+            QMessageBox.warning(None, "Invalid Directory", "The specified directory does not exist.")
+            return
+        
+        if not export_dir:
+            export_dir = str(Path.home())
+        
+        self.config.set("log_export_directory", export_dir)
+        QMessageBox.information(None, "Saved", "Log export directory saved successfully!")
+
     def _create_custom_categories_card(self) -> CardWidget:
         """Create card for managing custom file categories."""
         card = CardWidget()
@@ -619,6 +673,12 @@ class ChangelogsPage:
         
         layout.addWidget(TitleLabel("Changelogs"))
         
+        # Version 2.7.0
+        layout.addWidget(self._create_version_card("2.7.0", "November 2025", [
+            "Added export activity log feature",
+            "Configurable log export directory in settings",
+        ]))
+        
         # Version 2.6.0
         layout.addWidget(self._create_version_card("2.6.0", "November 2025", [
             "Added file size filter feature",
@@ -712,6 +772,7 @@ class OrganizePage:
         on_clear_log,
         on_undo=None,
         on_preview=None,
+        on_export_log=None,
     ) -> None:
         """Initialize organize page with callbacks."""
         self.on_organize = on_organize
@@ -720,6 +781,7 @@ class OrganizePage:
         self.on_clear_log = on_clear_log
         self.on_undo = on_undo or (lambda: None)
         self.on_preview = on_preview or (lambda: None)
+        self.on_export_log = on_export_log or (lambda: None)
 
     def create(self) -> QWidget:
         """Create organize page widget"""
@@ -928,6 +990,12 @@ class OrganizePage:
         clear_btn.setMinimumWidth(100)
         clear_btn.clicked.connect(self.on_clear_log)
         layout.addWidget(clear_btn)
+        
+        # Export Log button
+        export_btn = PushButton("Export Log")
+        export_btn.setMinimumWidth(100)
+        export_btn.clicked.connect(self.on_export_log)
+        layout.addWidget(export_btn)
 
         layout.addStretch()
         return layout
@@ -969,6 +1037,10 @@ class OrganizePage:
     def clear_log(self) -> None:
         """Clear log display"""
         self.log_text.clear()
+    
+    def get_log_content(self) -> str:
+        """Get current log content as plain text"""
+        return self.log_text.toPlainText()
 
 
 class AboutPage:
@@ -1016,7 +1088,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.6.0")
+        version_value = BodyLabel("2.7.0")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()
@@ -1141,6 +1213,7 @@ class FileOrganizerWindow(QMainWindow):
             on_clear_log=self._clear_log,
             on_undo=self._handle_undo,
             on_preview=self._handle_preview,
+            on_export_log=self._export_log,
         )
         self.organize_page = self.organize_page_obj.create()
 
@@ -1364,6 +1437,43 @@ class FileOrganizerWindow(QMainWindow):
     def _clear_log(self) -> None:
         """Clear log"""
         self.organize_page_obj.clear_log()
+    
+    def _export_log(self) -> None:
+        """Export activity log to timestamped text file"""
+        log_content = self.organize_page_obj.get_log_content()
+        
+        if not log_content.strip():
+            QMessageBox.information(self, "Export Log", "Activity log is empty. Nothing to export.")
+            return
+        
+        # Generate timestamped filename
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"FileOrganizer_Log_{timestamp}.txt"
+        
+        # Get export directory from config
+        export_dir = self.config.get("log_export_directory", str(Path.home()))
+        default_path = Path(export_dir) / default_filename
+        
+        # Open save file dialog
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Activity Log",
+            str(default_path),
+            "Text Files (*.txt);;All Files (*.*)"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"File Organizer Activity Log\n")
+                    f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write("=" * 80 + "\n\n")
+                    f.write(log_content)
+                
+                QMessageBox.information(self, "Export Successful", f"Activity log exported to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Failed", f"Failed to export log:\n{str(e)}")
 
     def _on_log_message(self, message: str) -> None:
         """Handle log message from logger"""
