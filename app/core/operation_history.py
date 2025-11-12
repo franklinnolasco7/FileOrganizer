@@ -1,7 +1,4 @@
-"""
-Operation History - Memento pattern for undo/redo
-Tracks file operations for rollback functionality
-"""
+"""Operation history for undo/redo functionality using Memento pattern"""
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -10,14 +7,18 @@ from datetime import datetime
 
 @dataclass
 class FileOperation:
-    """Single file operation record"""
+    """Record of a single file operation"""
     source: Path
     destination: Path
     timestamp: datetime
     category: str
     
     def to_dict(self) -> dict:
-        """Convert to dictionary for serialization"""
+        """Convert to dictionary for serialization
+        
+        Returns:
+            Dictionary representation
+        """
         return {
             "source": str(self.source),
             "destination": str(self.destination),
@@ -27,14 +28,10 @@ class FileOperation:
 
 
 class OperationHistory:
-    """
-    Manage operation history for undo/redo.
-    Memento pattern implementation.
-    """
+    """Manages operation history for undo/redo using Memento pattern"""
     
     def __init__(self, max_operations: int = 1000) -> None:
-        """
-        Initialize operation history.
+        """Initialize operation history
         
         Args:
             max_operations: Maximum operations to keep in history
@@ -44,7 +41,7 @@ class OperationHistory:
         self._current_index = -1
     
     def start_batch(self) -> None:
-        """Start a new batch of operations (one organize action)"""
+        """Start a new batch of operations for one organize action"""
         # Remove any "future" history if we're not at the end
         if self._current_index < len(self._history) - 1:
             self._history = self._history[:self._current_index + 1]
@@ -64,8 +61,7 @@ class OperationHistory:
         destination: Path,
         category: str,
     ) -> None:
-        """
-        Record a single file operation.
+        """Record a single file operation
         
         Args:
             source: Original file location
@@ -85,19 +81,26 @@ class OperationHistory:
         self._history[self._current_index].append(operation)
     
     def can_undo(self) -> bool:
-        """Check if undo is available"""
+        """Check if undo is available
+        
+        Returns:
+            True if undo is possible
+        """
         return self._current_index >= 0 and bool(self._history)
     
     def can_redo(self) -> bool:
-        """Check if redo is available"""
+        """Check if redo is available
+        
+        Returns:
+            True if redo is possible
+        """
         return self._current_index < len(self._history) - 1
     
     def get_undo_batch(self) -> Optional[List[FileOperation]]:
-        """
-        Get current batch for undo.
+        """Get current batch for undo
         
         Returns:
-            List of operations to undo, or None if no undo available
+            List of operations to undo, or None if unavailable
         """
         if not self.can_undo():
             return None
@@ -105,11 +108,10 @@ class OperationHistory:
         return self._history[self._current_index]
     
     def get_redo_batch(self) -> Optional[List[FileOperation]]:
-        """
-        Get next batch for redo.
+        """Get next batch for redo
         
         Returns:
-            List of operations to redo, or None if no redo available
+            List of operations to redo, or None if unavailable
         """
         if not self.can_redo():
             return None
@@ -132,17 +134,20 @@ class OperationHistory:
         self._current_index = -1
     
     def get_operation_count(self) -> int:
-        """Get total number of operations in current batch"""
+        """Get total number of operations in current batch
+        
+        Returns:
+            Number of operations
+        """
         if self._current_index >= 0 and self._current_index < len(self._history):
             return len(self._history[self._current_index])
         return 0
     
     def get_last_operation_summary(self) -> str:
-        """
-        Get summary of last operation batch.
+        """Get readable summary of last operation batch
         
         Returns:
-            Human-readable summary
+            Summary string
         """
         if not self.can_undo():
             return "No operations"

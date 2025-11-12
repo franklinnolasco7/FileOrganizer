@@ -309,15 +309,24 @@ class PreviewDialog(QDialog):
 
 
 class SettingsPage:
-    """Settings panel for persisting user preferences and options including custom categories."""
+    """Settings panel for user preferences and custom categories"""
     
     def __init__(self, config: ConfigManager, on_close) -> None:
-        """Initialize settings page with config manager and close callback."""
+        """Initialize settings page
+        
+        Args:
+            config: Configuration manager
+            on_close: Close callback function
+        """
         self.config = config
         self.on_close = on_close
     
     def create(self) -> QWidget:
-        """Create settings page widget including all settings."""
+        """Create settings page widget
+        
+        Returns:
+            Settings page widget
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
@@ -599,7 +608,7 @@ class SettingsPage:
             self.categories_list.addItem(f"{name}: {exts_str}")
 
     def _add_custom_category(self) -> None:
-        """Prompt user to add a new custom category with extensions."""
+        """Prompt user to add a custom category"""
         # Get category name
         name, ok = QInputDialog.getText(None, "Add Custom Category", "Category Name:")
         if not ok or not name.strip():
@@ -622,7 +631,7 @@ class SettingsPage:
         self._refresh_custom_categories_list()
 
     def _remove_custom_category(self) -> None:
-        """Remove selected custom category."""
+        """Remove selected custom category"""
         selected = self.categories_list.selectedItems()
         if not selected:
             QMessageBox.warning(None, "Remove Category", "Select a category to remove.")
@@ -641,7 +650,7 @@ class SettingsPage:
             self._refresh_custom_categories_list()
 
     def _save_persistent_paths(self) -> None:
-        """Save persistent folder paths to config."""
+        """Save persistent folder paths to config"""
         src = (self.src_input.text() or "").strip()
         dst = (self.dst_input.text() or "").strip()
         auto_save = self.auto_save_cb.isChecked()
@@ -654,14 +663,18 @@ class SettingsPage:
 
 
 class ChangelogsPage:
-    """Changelogs page showing version history and updates."""
+    """Changelogs page showing version history"""
     
     def __init__(self) -> None:
-        """Initialize changelogs page."""
+        """Initialize changelogs page"""
         pass
     
     def create(self) -> QWidget:
-        """Create changelogs page widget."""
+        """Create changelogs page widget
+        
+        Returns:
+            Changelogs page widget
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
@@ -672,6 +685,11 @@ class ChangelogsPage:
         layout.setSpacing(16)
         
         layout.addWidget(TitleLabel("Changelogs"))
+        
+        # Version 2.7.1
+        layout.addWidget(self._create_version_card("2.7.1", "November 2025", [
+            "Improved code documentation across all modules",
+        ]))
         
         # Version 2.7.0
         layout.addWidget(self._create_version_card("2.7.0", "November 2025", [
@@ -1044,14 +1062,18 @@ class OrganizePage:
 
 
 class AboutPage:
-    """About & Credits page."""
+    """About page with project information and credits"""
     
     def __init__(self) -> None:
-        """Initialize about page."""
+        """Initialize about page"""
         pass
     
     def create(self) -> QWidget:
-        """Create about page widget."""
+        """Create about page widget
+        
+        Returns:
+            About page widget
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
@@ -1075,7 +1097,11 @@ class AboutPage:
         return scroll
     
     def _create_app_info_card(self) -> CardWidget:
-        """Create app information card."""
+        """Create app information card
+        
+        Returns:
+            App info card widget
+        """
         card = CardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
@@ -1088,7 +1114,7 @@ class AboutPage:
         version_layout = QHBoxLayout()
         version_label = BodyLabel("Version:")
         version_label.setStyleSheet("font-weight: 500;")
-        version_value = BodyLabel("2.7.0")
+        version_value = BodyLabel("2.7.1")
         version_layout.addWidget(version_label)
         version_layout.addWidget(version_value)
         version_layout.addStretch()
@@ -1123,7 +1149,11 @@ class AboutPage:
         return card
     
     def _create_credits_card(self) -> CardWidget:
-        """Create credits card."""
+        """Create credits card
+        
+        Returns:
+            Credits card widget
+        """
         card = CardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
@@ -1175,7 +1205,7 @@ class AboutPage:
 
 
 class FileOrganizerWindow(QMainWindow):
-    """Main application window with navigation and page routing."""
+    """Main application window with navigation and page routing"""
 
     def __init__(
         self,
@@ -1183,7 +1213,13 @@ class FileOrganizerWindow(QMainWindow):
         config: ConfigManager,
         logger: LoggerService,
     ) -> None:
-        """Initialize main window with dependency injection."""
+        """Initialize main window
+        
+        Args:
+            file_organizer: File organizer instance
+            config: Configuration manager
+            logger: Logger service
+        """
         super().__init__()
 
         self.organizer = file_organizer

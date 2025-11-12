@@ -4,7 +4,7 @@ from typing import Dict, List, Final
 
 
 class FileCategory(Enum):
-    """File categories enumeration - used for organization."""
+    """File categories for automated organization"""
     IMAGES = "Images"
     VIDEOS = "Videos"
     MUSIC = "Music"
@@ -17,15 +17,19 @@ class FileCategory(Enum):
 
     @property
     def folder_name(self) -> str:
-        """Get human-readable folder name."""
+        """Get folder name for this category
+        
+        Returns:
+            Readable folder name
+        """
         return self.value
 
 
 
 class JeffSuFolders(Enum):
-    """Jeff Su Framework folder structure.
+    """Jeff Su Framework folder structure with numbered prefixes
     
-    Numbered prefixes keep folders in consistent order across systems.
+    Numbered prefixes maintain consistent ordering across systems.
     """
     PERSONAL = "01_Personal"
     WORK = "02_Work"
@@ -36,12 +40,16 @@ class JeffSuFolders(Enum):
 
     @property
     def folder_path(self) -> str:
-        """Get folder path string."""
+        """Get folder path string
+        
+        Returns:
+            Folder path
+        """
         return self.value
 
 
 
-# Maps extensions to categories for automated sorting
+# Extension to category mappings for automated sorting
 FILE_EXTENSIONS: Final[Dict[FileCategory, List[str]]] = {
     FileCategory.IMAGES: [
         "jpg", "jpeg", "png", "gif", "bmp", "svg", "ico", "webp", "tiff", "heic"
@@ -69,22 +77,22 @@ FILE_EXTENSIONS: Final[Dict[FileCategory, List[str]]] = {
 }
 
 
-# Custom categories storage (loaded from config at runtime)
+# Custom categories loaded from config at runtime
 CUSTOM_CATEGORIES: Dict[str, List[str]] = {}
 
 
 def add_custom_category(name: str, extensions: List[str]) -> None:
-    """Add or update a custom category.
+    """Add or update a custom category
     
     Args:
         name: Category name
-        extensions: List of file extensions (without dots, e.g., ["pdf", "docx"])
+        extensions: File extensions (without dots)
     """
     CUSTOM_CATEGORIES[name] = [ext.lower().lstrip('.') for ext in extensions]
 
 
 def remove_custom_category(name: str) -> None:
-    """Remove a custom category.
+    """Remove a custom category
     
     Args:
         name: Category name to remove
@@ -94,17 +102,17 @@ def remove_custom_category(name: str) -> None:
 
 
 def get_all_categories() -> Dict[str, List[str]]:
-    """Get all categories (default + custom).
+    """Get all categories including custom ones
     
     Returns:
-        Dictionary mapping category names to extension lists
+        Dictionary mapping category names to extensions
     """
     all_categories = {cat.value: exts for cat, exts in FILE_EXTENSIONS.items()}
     all_categories.update(CUSTOM_CATEGORIES)
     return all_categories
 
 
-# Keywords will power AI categorization when added; descriptions show up in UI
+# Jeff Su Framework metadata (keywords enable AI categorization)
 JEFF_SU_STRUCTURE: Final[Dict[str, Dict[str, str]]] = {
     JeffSuFolders.PERSONAL.value: {
         "keywords": "personal,private,me,my,hobby",
@@ -135,6 +143,6 @@ APP_VERSION: Final[str] = "2.4.0"
 APP_DESCRIPTION: Final[str] = "Open source file organization tool"
 
 
-# Configuration file location
+# Configuration paths
 CONFIG_FILENAME: Final[str] = ".file_organizer_config.json"
 CONFIG_DIR: Final[str] = "~/.config/file_organizer"

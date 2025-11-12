@@ -30,10 +30,7 @@ class OrganizationStats:
 
 
 class FileOrganizer:
-    """Orchestrate file organization by category.
-    
-    Delegates to specialized services; doesn't handle file I/O directly.
-    """
+    """Orchestrates file organization by category with undo support"""
     
     def __init__(
         self,
@@ -41,7 +38,13 @@ class FileOrganizer:
         file_service: FileService | None = None,
         file_manager: FileManager | None = None,
     ) -> None:
-        """Initialize file organizer with dependency injection."""
+        """Initialize file organizer with dependencies
+        
+        Args:
+            logger: Service for logging operations
+            file_service: Service for file categorization
+            file_manager: Service for file operations
+        """
         self.logger = logger
         self.file_service = file_service or FileService()
         self.file_manager = file_manager or FileManager(logger)
@@ -123,9 +126,23 @@ class FileOrganizer:
         max_size_kb: float = 0,
         enable_size_filter: bool = False,
     ) -> Dict[str, int]:
-        """Organize files from source to destination by category.
+        """Organize files from source to destination by category
         
-        Now recursively scans nested folders and removes empty dirs after moving.
+        Recursively scans nested folders and cleans up empty directories.
+        
+        Args:
+            source_path: Source folder to organize
+            destination_path: Destination folder for organized files
+            active_categories: Categories to include (None = all except OTHERS)
+            min_size_kb: Minimum file size in KB (0 = no minimum)
+            max_size_kb: Maximum file size in KB (0 = no maximum)
+            enable_size_filter: Whether to apply size filtering
+            
+        Returns:
+            Dictionary with stats: moved, skipped, errors
+            
+        Raises:
+            OrganizationError: If operation fails
         """
         try:
             self.history.start_batch()
@@ -181,7 +198,17 @@ class FileOrganizer:
 
 
     def _validate_source_path(self, source_path: Path) -> Path:
-        """Validate source path exists and is a directory."""
+        """Validate source path exists and is a directory
+        
+        Args:
+            source_path: Path to validate
+            
+        Returns:
+            Resolved absolute path
+            
+        Raises:
+            OrganizationError: If path is invalid
+        """
         if not source_path:
             raise OrganizationError("Source path is required")
         if not isinstance(source_path, Path):
@@ -198,7 +225,17 @@ class FileOrganizer:
 
 
     def _validate_destination_path(self, dest_path: Path) -> Path:
-        """Validate destination path; create if doesn't exist."""
+        """Validate destination path and create if needed
+        
+        Args:
+            dest_path: Destination path to validate
+            
+        Returns:
+            Resolved absolute path
+            
+        Raises:
+            OrganizationError: If path is invalid or cannot be created
+        """
         if not dest_path:
             raise OrganizationError("Destination path is required")
         if not isinstance(dest_path, Path):
@@ -225,7 +262,17 @@ class FileOrganizer:
         self,
         categories: List[FileCategory] | None
     ) -> List[FileCategory]:
-        """Validate active categories; default to all except OTHERS."""
+        """Validate and normalize category list
+        
+        Args:
+            categories: List of categories (None = all except OTHERS)
+            
+        Returns:
+            Validated list of categories
+            
+        Raises:
+            OrganizationError: If categories are invalid
+        """
         if categories is None:
             return [cat for cat in FileCategory if cat.name != "OTHERS"]
 
@@ -253,7 +300,19 @@ class FileOrganizer:
         max_size_kb: float = 0,
         enable_size_filter: bool = False,
     ) -> OrganizationStats:
-        """Process each file and accumulate statistics."""
+        """Process and organize each file
+        
+        Args:
+            files: List of file paths to process
+            destination_path: Destination folder
+            categories: Active categories
+            min_size_kb: Minimum file size filter
+            max_size_kb: Maximum file size filter
+            enable_size_filter: Whether to apply size filters
+            
+        Returns:
+            Organization statistics
+        """
         stats = OrganizationStats()
 
 
@@ -286,7 +345,19 @@ class FileOrganizer:
         destination_path: Path,
         active_categories: List[FileCategory],
     ) -> str:
-        """Move single file to its category folder."""
+        """Move a single file to its category folder
+        
+        Args:
+            file_path: File to organize
+            destination_path: Base destination path
+            active_categories: Active categories
+            
+        Returns:
+            Status: "moved" or "skipped"
+            
+        Raises:
+            FileOperationError: If file move fails
+        """
         category = self.file_service.get_file_category(file_path)
 
 
@@ -320,7 +391,16 @@ class FileOrganizer:
 
 
     def undo_last_operation(self) -> Dict[str, int]:
-        """Undo the last organize operation and clean up empty folders."""
+        """Undo the last organization operation
+        
+        Moves files back to original locations and removes empty folders.
+        
+        Returns:
+            Dictionary with stats: restored, errors, folders_removed
+            
+        Raises:
+            OrganizationError: If no operations to undo
+        """
         if not self.history.can_undo():
             raise OrganizationError("No operations to undo")
         
@@ -378,7 +458,14 @@ class FileOrganizer:
 
     @staticmethod
     def _is_empty_directory(path: Path) -> bool:
-        """Check if directory is empty."""
+        """Check if directory is empty
+        
+        Args:
+            path: Directory path to check
+            
+        Returns:
+            True if directory is empty, False otherwise
+        """
         try:
             return path.is_dir() and not any(path.iterdir())
         except Exception:
@@ -417,7 +504,14 @@ class FileOrganizer:
         self,
         destination_path: Path,
     ) -> bool:
-        """Create Jeff Su framework folder structure with READMEs."""
+        """Create Jeff Su framework folder structure with READMEs
+        
+        Args:
+            destination_path: Where to create the framework
+            
+        Returns:
+            True if successful, False otherwise
+        """
         try:
             self._validate_destination_path(destination_path)
             self.logger.separator()
@@ -454,7 +548,15 @@ class FileOrganizer:
 
     @staticmethod
     def _generate_readme(folder_name: str, info: Dict[str, str]) -> str:
-        """Generate README content for framework folder."""
+        """Generate README content for framework folder
+        
+        Args:
+            folder_name: Name of the folder
+            info: Folder metadata (description, keywords)
+            
+        Returns:
+            README content string
+        """
         return f"""JEFF SU FILE MANAGEMENT FRAMEWORK
 ═══════════════════════════════════════════════════
 
@@ -486,7 +588,11 @@ PRINCIPLES:
 
 
     def _log_completion_stats(self, stats: OrganizationStats) -> None:
-        """Log final organization statistics."""
+        """Log final organization statistics
+        
+        Args:
+            stats: Organization statistics to log
+        """
         self.logger.separator()
         self.logger.success("Organization complete!")
         self.logger.info(f"✓ Moved: {stats.moved}")

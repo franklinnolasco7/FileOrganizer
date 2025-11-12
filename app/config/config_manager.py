@@ -26,7 +26,7 @@ class ConfigIOError(ConfigError):
 
 @dataclass
 class ConfigSchema:
-    """Define valid configuration keys, types, and validation rules"""
+    """Schema definition for configuration validation"""
     key: str
     expected_type: type
     default: Any
@@ -35,10 +35,10 @@ class ConfigSchema:
 
 
     def validate(self, value: Any) -> None:
-        """Validate value against schema.
+        """Validate value against schema rules
         
         Args:
-            value: Value to validate
+            value: The value to validate
             
         Raises:
             ConfigValidationError: If validation fails
@@ -50,29 +50,25 @@ class ConfigSchema:
                 f"got {type(value).__name__}"
             )
 
-
-        # Custom validator
+        # Custom validation
         if self.validator and not self.validator(value):
             raise ConfigValidationError(f"Validation failed for '{self.key}': {value}")
 
 
 
 class ConfigManager:
-    """Configuration management with validation and persistence.
-    
-    Loaded from file at init, changes tracked for atomic saves.
-    """
+    """Manages application configuration with validation and persistence"""
     
     def __init__(
         self,
         config_file: Path,
         schema: Dict[str, ConfigSchema] | None = None,
     ) -> None:
-        """Initialize config manager.
+        """Initialize configuration manager
         
         Args:
-            config_file: Path to JSON config file
-            schema: Configuration schema for validation
+            config_file: Path to JSON configuration file
+            schema: Optional configuration schema for validation
         """
         self.config_file = config_file.expanduser().resolve()
         self.schema = schema or {}
@@ -83,15 +79,14 @@ class ConfigManager:
 
 
     def _load(self) -> None:
-        """Load configuration from file or initialize with defaults.
+        """Load configuration from file or initialize with defaults
         
         Raises:
-            ConfigIOError: If file is corrupted and unreadable
+            ConfigIOError: If file is corrupted or unreadable
         """
         self._config = {}
 
-
-        # Load from file if exists
+        # Load existing config if available
         if self.config_file.exists():
             try:
                 with open(self.config_file, "r", encoding="utf-8") as f:
@@ -104,7 +99,7 @@ class ConfigManager:
                             self.schema[key].validate(value)
                             self._config[key] = value
                         except ConfigValidationError:
-                            # Skip invalid entries, use default
+                            # Fall back to default on validation error
                             self._config[key] = self.schema[key].default
                     else:
                         # Allow unknown keys for forward compatibility
@@ -114,26 +109,25 @@ class ConfigManager:
             except IOError as e:
                 raise ConfigIOError(f"Cannot read config file: {str(e)}")
 
-
-        # Fill missing keys with defaults
+        # Fill in missing keys with defaults
         for key, schema in self.schema.items():
             if key not in self._config:
                 self._config[key] = schema.default
 
 
     def _load_custom_categories(self) -> None:
-        """Load custom categories from config into constants module."""
+        """Load custom categories from config into runtime"""
         custom_cats = self.get("custom_categories", {})
         for name, extensions in custom_cats.items():
             add_custom_category(name, extensions)
 
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value safely.
+        """Get configuration value
         
         Args:
             key: Configuration key
-            default: Fallback value if key not found
+            default: Default value if key not found
             
         Returns:
             Configuration value or default
@@ -142,44 +136,41 @@ class ConfigManager:
 
 
     def set(self, key: str, value: Any, persist: bool = True) -> None:
-        """Set configuration value with validation.
+        """Set configuration value with optional validation
         
         Args:
             key: Configuration key
-            value: Configuration value
-            persist: Save to disk immediately (set False for batch updates)
+            value: Value to set
+            persist: Whether to save to disk immediately
             
         Raises:
-            ConfigValidationError: If value fails validation
+            ConfigValidationError: If value fails schema validation
         """
-        # Validate if schema exists
+        # Validate against schema if available
         if key in self.schema:
             self.schema[key].validate(value)
 
-
         self._config[key] = value
         self._dirty = True
-
 
         if persist:
             self.save()
 
 
     def save(self) -> None:
-        """Persist configuration to file.
+        """Save configuration to disk atomically
         
         Raises:
-            ConfigIOError: If save fails
+            ConfigIOError: If save operation fails
         """
         if not self._dirty:
             return
-
 
         try:
             # Ensure parent directory exists
             self.config_file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
             
-            # Write atomically (write to temp, then rename)
+            # Atomic write: temp file -> rename
             temp_file = self.config_file.with_suffix(".tmp")
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2, ensure_ascii=False)
@@ -191,16 +182,16 @@ class ConfigManager:
 
 
     def add_custom_category(self, name: str, extensions: list) -> None:
-        """Add custom category to config and runtime.
+        """Add a custom file category
         
         Args:
             name: Category name
-            extensions: List of extensions (e.g., ["pdf", "doc"])
+            extensions: List of file extensions (e.g., ["pdf", "docx"])
         """
         if "custom_categories" not in self._config:
             self._config["custom_categories"] = {}
         
-        # Clean extensions (remove dots, lowercase)
+        # Normalize extensions (lowercase, remove leading dots)
         clean_exts = [ext.lower().lstrip('.') for ext in extensions]
         
         self._config["custom_categories"][name] = clean_exts
@@ -210,7 +201,7 @@ class ConfigManager:
 
 
     def remove_custom_category(self, name: str) -> None:
-        """Remove custom category from config and runtime.
+        """Remove a custom file category
         
         Args:
             name: Category name to remove
@@ -223,7 +214,7 @@ class ConfigManager:
 
 
     def get_custom_categories(self) -> Dict[str, list]:
-        """Get all custom categories.
+        """Get all custom categories
         
         Returns:
             Dictionary mapping category names to extension lists
@@ -232,24 +223,35 @@ class ConfigManager:
 
 
     def get_all(self) -> Dict[str, Any]:
-        """Get all configuration (immutable copy)"""
+        """Get a copy of all configuration values
+        
+        Returns:
+            Dictionary containing all configuration
+        """
         return self._config.copy()
 
 
     def reset_to_defaults(self) -> None:
-        """Reset all configuration to schema defaults"""
+        """Reset all configuration values to schema defaults"""
         for key, schema in self.schema.items():
             self._config[key] = schema.default
         self._dirty = True
 
 
     def has_key(self, key: str) -> bool:
-        """Check if key exists"""
+        """Check if a configuration key exists
+        
+        Args:
+            key: Configuration key to check
+            
+        Returns:
+            True if key exists, False otherwise
+        """
         return key in self._config
 
 
 
-# Default application configuration schema
+# Default configuration schema for the application
 DEFAULT_CONFIG_SCHEMA: Dict[str, ConfigSchema] = {
     "destination_folder": ConfigSchema(
         key="destination_folder",

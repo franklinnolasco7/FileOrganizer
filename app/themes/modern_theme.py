@@ -3,13 +3,13 @@ from typing import Dict
 
 
 class ThemeMode(Enum):
-    """Theme mode enumeration"""
+    """Theme mode selection"""
     LIGHT = "light"
     DARK = "dark"
 
 
 class ColorScheme:
-    """Single color scheme (light or dark)."""
+    """Color scheme for light or dark theme"""
     
     def __init__(
         self,
@@ -25,7 +25,7 @@ class ColorScheme:
         border: str,
         button_fg: str = "white",
     ) -> None:
-        """Initialize color scheme.
+        """Initialize color scheme
         
         Args:
             bg: Primary background color
@@ -53,7 +53,11 @@ class ColorScheme:
         self.button_fg = button_fg
 
     def to_dict(self) -> Dict[str, str]:
-        """Convert to dictionary for tkinter/PyQt6 configuration"""
+        """Convert to dictionary for UI framework
+        
+        Returns:
+            Dictionary of color values
+        """
         return {
             "bg": self.bg,
             "secondary_bg": self.secondary_bg,
@@ -72,10 +76,7 @@ class ColorScheme:
 
 
 class ThemeManager:
-    """Manage theme modes and notify UI on changes.
-    
-    Stores both light and dark schemes; observers updated on switch.
-    """
+    """Manages theme modes and notifies observers on changes"""
     
     def __init__(self) -> None:
         """Initialize theme manager with light and dark schemes"""
@@ -112,16 +113,24 @@ class ThemeManager:
 
     @property
     def current_theme(self) -> Dict[str, str]:
-        """Get current theme colors"""
+        """Get current theme colors
+        
+        Returns:
+            Dictionary of color values
+        """
         return self._schemes[self._current_mode].to_dict()
 
     @property
     def current_mode(self) -> ThemeMode:
-        """Get current theme mode"""
+        """Get current theme mode
+        
+        Returns:
+            Current theme mode
+        """
         return self._current_mode
 
     def set_mode(self, mode: ThemeMode) -> None:
-        """Change theme mode and notify observers.
+        """Change theme mode and notify observers
         
         Args:
             mode: New theme mode
@@ -133,7 +142,7 @@ class ThemeManager:
         self._notify_observers()
 
     def get_color(self, key: str) -> str:
-        """Get specific color from current theme.
+        """Get specific color from current theme
         
         Args:
             key: Color key
@@ -150,7 +159,7 @@ class ThemeManager:
         return color
 
     def register_observer(self, callback) -> None:
-        """Register callback for theme changes.
+        """Register callback for theme changes
         
         Args:
             callback: Function to call on theme change
@@ -158,7 +167,7 @@ class ThemeManager:
         self._observers.append(callback)
 
     def _notify_observers(self) -> None:
-        """Notify all observers of theme change; trap exceptions."""
+        """Notify all observers with error isolation"""
         for callback in self._observers:
             try:
                 callback(self.current_theme)

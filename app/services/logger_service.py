@@ -1,4 +1,4 @@
-"""Logging service with observer pattern and bounded history."""
+"""Logging service with observer pattern for real-time updates"""
 from typing import Callable, List
 from datetime import datetime
 from collections import deque
@@ -6,7 +6,7 @@ from enum import Enum
 
 
 class LogLevel(Enum):
-    """Log level enumeration"""
+    """Log severity levels"""
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -15,17 +15,16 @@ class LogLevel(Enum):
 
 
 class LoggerService:
-    """Centralized logging with observer pattern.
-    
-    Multiple subscribers notified on each log. Circular buffer prevents
-    memory leaks by keeping only recent entries.
-    """
+    """Centralized logging with subscriber notifications and bounded history"""
     
     def __init__(self, max_history: int = 1000) -> None:
-        """Initialize logger service.
+        """Initialize logger service
         
         Args:
-            max_history: Maximum log entries to keep (circular buffer)
+            max_history: Maximum log entries to keep in circular buffer
+            
+        Raises:
+            ValueError: If max_history is too small
         """
         if max_history < 10:
             raise ValueError("max_history must be at least 10")
@@ -35,7 +34,7 @@ class LoggerService:
         self.max_history = max_history
 
     def subscribe(self, callback: Callable[[str], None]) -> None:
-        """Subscribe to log events (idempotent - no duplicates).
+        """Subscribe to log events (no duplicates)
         
         Args:
             callback: Function called on every log event
@@ -44,7 +43,7 @@ class LoggerService:
             self._subscribers.append(callback)
 
     def unsubscribe(self, callback: Callable[[str], None]) -> None:
-        """Unsubscribe from log events (safe - no error if not found).
+        """Unsubscribe from log events
         
         Args:
             callback: Callback to remove
@@ -56,20 +55,21 @@ class LoggerService:
             pass
 
     def _notify_subscribers(self, message: str, level: LogLevel) -> None:
-        """Notify all subscribers; trap exceptions so one failure doesn't break others.
+        """Notify all subscribers with error isolation
         
         Args:
             message: Formatted log message
-            level: Log level for filtering (optional for future use)
+            level: Log level
         """
-        for subscriber in self._subscribers[:]:  # Iterate over copy to allow unsubscribe during callback
+        # Iterate over copy to allow unsubscribe during callback
+        for subscriber in self._subscribers[:]:
             try:
                 subscriber(message)
             except Exception as e:
                 print(f"[LoggerService] Subscriber error: {str(e)}")
 
     def _log(self, level: LogLevel, message: str) -> None:
-        """Format message and distribute to subscribers and history.
+        """Format and distribute log message
         
         Args:
             level: Log level
@@ -80,23 +80,43 @@ class LoggerService:
         self._notify_subscribers(formatted, level)
 
     def debug(self, message: str) -> None:
-        """Log debug message"""
+        """Log debug message
+        
+        Args:
+            message: Debug message
+        """
         self._log(LogLevel.DEBUG, message)
 
     def info(self, message: str) -> None:
-        """Log info message"""
+        """Log info message
+        
+        Args:
+            message: Info message
+        """
         self._log(LogLevel.INFO, message)
 
     def warning(self, message: str) -> None:
-        """Log warning message"""
+        """Log warning message
+        
+        Args:
+            message: Warning message
+        """
         self._log(LogLevel.WARNING, message)
 
     def error(self, message: str) -> None:
-        """Log error message"""
+        """Log error message
+        
+        Args:
+            message: Error message
+        """
         self._log(LogLevel.ERROR, message)
 
     def success(self, message: str) -> None:
-        """Log success message"""
+        """Log success message
+        
+        Args:
+            message: Success message
+        """
         self._log(LogLevel.SUCCESS, message)
 
     def separator(self) -> None:

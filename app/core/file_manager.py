@@ -56,22 +56,18 @@ class FileOperationResult:
 
 
 class FileManager:
-    """Handle file operations (move, copy, create folders).
-    
-    All methods return FileOperationResult with detailed context instead of
-    implicit booleans, enabling better error recovery for callers.
-    """
+    """Handles all file operations with error recovery support"""
     
     def __init__(
         self,
         logger: LoggerService,
         duplicate_strategy: DuplicateHandlingStrategy = DuplicateHandlingStrategy.RENAME,
     ) -> None:
-        """Initialize file manager with dependency injection.
+        """Initialize file manager
         
         Args:
-            logger: LoggerService for logging
-            duplicate_strategy: How to handle duplicate filenames
+            logger: Service for logging operations
+            duplicate_strategy: Default strategy for handling duplicate filenames
         """
         self.logger = logger
         self.duplicate_strategy = duplicate_strategy
@@ -83,15 +79,15 @@ class FileManager:
         destination: Path,
         strategy: DuplicateHandlingStrategy | None = None,
     ) -> FileOperationResult:
-        """Move file from source to destination.
+        """Move file from source to destination with duplicate handling
         
         Args:
             source: Source file path
             destination: Destination file path
-            strategy: Override default duplicate strategy (optional)
+            strategy: Override default duplicate strategy
             
         Returns:
-            FileOperationResult with detailed status
+            FileOperationResult with operation details
         """
         strategy = strategy or self.duplicate_strategy
 
@@ -145,15 +141,15 @@ class FileManager:
         destination: Path,
         strategy: DuplicateHandlingStrategy | None = None,
     ) -> FileOperationResult:
-        """Copy file from source to destination.
+        """Copy file from source to destination
         
         Args:
             source: Source file path
             destination: Destination file path
-            strategy: Duplicate handling strategy
+            strategy: Override default duplicate strategy
             
         Returns:
-            FileOperationResult with detailed status
+            FileOperationResult with operation details
         """
         strategy = strategy or self.duplicate_strategy
 
@@ -195,7 +191,7 @@ class FileManager:
 
 
     def _ensure_parent_directory(self, file_path: Path) -> None:
-        """Ensure parent directory exists, create if needed.
+        """Create parent directory if it doesn't exist
         
         Args:
             file_path: File path whose parent should exist
@@ -216,11 +212,11 @@ class FileManager:
         destination: Path,
         strategy: DuplicateHandlingStrategy,
     ) -> Path:
-        """Apply duplicate handling strategy to destination path.
+        """Apply duplicate handling strategy to resolve final path
         
         Args:
             destination: Desired destination path
-            strategy: How to handle existing file
+            strategy: How to handle existing files
             
         Returns:
             Final path (may be modified based on strategy)
@@ -248,7 +244,7 @@ class FileManager:
 
 
     def _generate_unique_path(self, path: Path) -> Path:
-        """Generate unique filename by appending counter.
+        """Generate unique filename by appending counter
         
         Example: file.txt → file_1.txt → file_2.txt
         
@@ -257,6 +253,9 @@ class FileManager:
             
         Returns:
             Path with unique filename
+            
+        Raises:
+            FileOperationError: If counter exceeds limit
         """
         stem = path.stem
         suffix = path.suffix
@@ -276,14 +275,14 @@ class FileManager:
 
 
     def create_folders(self, base_path: Path, folder_names: List[str]) -> FileOperationResult:
-        """Create multiple folders in base path.
+        """Create multiple folders in base path
         
         Args:
-            base_path: Base path where folders will be created
+            base_path: Base directory for folder creation
             folder_names: List of folder names to create
             
         Returns:
-            FileOperationResult with details
+            FileOperationResult with operation status
         """
         try:
             if not folder_names:
@@ -318,15 +317,15 @@ class FileManager:
         content: str,
         overwrite: bool = False,
     ) -> FileOperationResult:
-        """Write README file to folder with UTF-8 encoding.
+        """Write README file to folder with UTF-8 encoding
         
         Args:
-            folder_path: Path to folder
+            folder_path: Folder to write README in
             content: README content
             overwrite: Whether to overwrite existing README
             
         Returns:
-            FileOperationResult with status
+            FileOperationResult with operation status
         """
         try:
             readme_path = folder_path / "README.txt"
@@ -359,13 +358,11 @@ class FileManager:
 
 
     def get_files_in_folder(self, folder_path: Path, recursive: bool = True) -> List[Path]:
-        """Get all files in folder (recursive by default, files only).
-        
-        Now scans nested folders recursively to find all files.
+        """Get all files in folder with optional recursive scanning
         
         Args:
-            folder_path: Path to folder
-            recursive: If True, scan all nested folders; if False, only top-level
+            folder_path: Folder to scan
+            recursive: If True, scan all subfolders; if False, only top level
             
         Returns:
             Sorted list of file paths
@@ -400,9 +397,9 @@ class FileManager:
 
 
     def cleanup_empty_folders(self, source_path: Path) -> int:
-        """Remove all empty folders recursively after file extraction.
+        """Remove all empty folders recursively
         
-        Useful after moving files from nested structure - removes empty dirs.
+        Useful after moving files from nested structures.
         
         Args:
             source_path: Root folder to clean

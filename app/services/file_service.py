@@ -5,24 +5,20 @@ from app.core.constants import FileCategory, FILE_EXTENSIONS, CUSTOM_CATEGORIES
 
 
 class FileService:
-    """Determines file categories by extension.
-    
-    Now supports both default and custom categories.
-    Only handles categorization logic; FileManager handles actual file operations.
-    """
+    """Determines file categories by extension with custom category support"""
     
     def __init__(self, extensions_map: Dict[FileCategory, List[str]] | None = None) -> None:
-        """Initialize file service with extension mappings.
+        """Initialize file service
         
         Args:
-            extensions_map: Custom file extension mappings (testability)
+            extensions_map: Custom extension mappings for testing
         """
         self.extensions_map = extensions_map or FILE_EXTENSIONS
 
 
     @staticmethod
     def get_file_extension(file_path: Path) -> str:
-        """Get file extension without dot.
+        """Get normalized file extension
         
         Args:
             file_path: Path to file
@@ -34,36 +30,33 @@ class FileService:
 
 
     def get_file_category(self, file_path: Path) -> FileCategory | str:
-        """Determine file category by extension.
+        """Determine file category by extension
         
-        Now checks custom categories first, then default categories.
+        Checks custom categories first, then default categories.
         
         Args:
             file_path: Path to file
             
         Returns:
-            FileCategory enum value or custom category name (str)
+            FileCategory enum or custom category name (str)
         """
         extension = self.get_file_extension(file_path)
-
 
         # Check custom categories first (higher priority)
         for category_name, extensions in CUSTOM_CATEGORIES.items():
             if extension in extensions:
                 return category_name
 
-
         # Check default categories
         for category, extensions in self.extensions_map.items():
             if extension in extensions:
                 return category
 
-
         return FileCategory.OTHERS
 
 
     def is_hidden_file(self, file_path: Path) -> bool:
-        """Check if file is hidden (starts with dot on Unix).
+        """Check if file is hidden (starts with dot)
         
         Args:
             file_path: Path to file
@@ -75,7 +68,7 @@ class FileService:
 
 
     def get_file_size_mb(self, file_path: Path) -> float:
-        """Get file size in megabytes.
+        """Get file size in megabytes
         
         Args:
             file_path: Path to file
@@ -89,7 +82,7 @@ class FileService:
 
 
     def get_category_for_extension(self, extension: str) -> FileCategory | str | None:
-        """Get category for a specific extension.
+        """Get category for a specific extension
         
         Args:
             extension: File extension (with or without dot)
