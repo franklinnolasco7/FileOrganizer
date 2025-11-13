@@ -714,7 +714,8 @@ class FileOrganizerWindow(QMainWindow):
         
         # Clean up separator lines from log content
         lines = log_content.split('\n')
-        cleaned_lines = [line for line in lines if not line.strip().startswith('═')]
+        # Remove empty lines from export (they were just for spacing in the app)
+        cleaned_lines = [line for line in lines if line.strip()]
         log_content = '\n'.join(cleaned_lines)
         
         # Generate timestamped filename

@@ -227,8 +227,18 @@ class ColoredPlainTextEdit(PlainTextEdit):
         # Update colors in case theme changed
         self._update_colors()
         
+        # Handle blank lines for spacing
+        if not message.strip():
+            self.blockSignals(True)
+            cursor = self.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText("\n")
+            self.setTextCursor(cursor)
+            self.blockSignals(False)
+            self.ensureCursorVisible()
+            return
+        
         level = self._extract_level(message)
-        formatted_msg = self._strip_timestamp(message)
         
         self.blockSignals(True)
         
@@ -238,23 +248,12 @@ class ColoredPlainTextEdit(PlainTextEdit):
         fmt = QTextCharFormat()
         fmt.setForeground(self.COLORS.get(level, self.COLORS["INFO"]))
         
-        cursor.insertText(formatted_msg + "\n", fmt)
+        # Keep the full message with timestamp
+        cursor.insertText(message + "\n", fmt)
         self.setTextCursor(cursor)
         
         self.blockSignals(False)
         self.ensureCursorVisible()
-    
-    @staticmethod
-    def _strip_timestamp(message: str) -> str:
-        """Remove first timestamp bracket; keep [LEVEL] and message."""
-        try:
-            first_bracket = message.find("]")
-            if first_bracket != -1:
-                remainder = message[first_bracket+1:].strip()
-                return remainder
-        except Exception:
-            pass
-        return message
     
     @staticmethod
     def _extract_level(message: str) -> str:

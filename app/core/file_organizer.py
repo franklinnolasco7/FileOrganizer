@@ -6,7 +6,7 @@ from datetime import datetime
 from app.core.constants import FileCategory, JEFF_SU_STRUCTURE
 from app.services.logger_service import LoggerService
 from app.services.file_service import FileService
-from app.core.file_manager import FileManager, FileOperationError
+from app.core.file_manager import FileManager, FileOperationError, DuplicateHandlingStrategy
 from app.core.operation_history import OperationHistory
 
 
@@ -401,7 +401,13 @@ class FileOrganizer:
                 category=category.value,
             )
             
-            self.logger.info(f"Moved: {file_path.name} → {category.value}/")
+            # Check if file was renamed due to duplicate
+            if result.path.name != file_path.name:
+                self.logger.info(f"Moved: {file_path.name} → {category.value}/ (renamed to {result.path.name})")
+            elif result.strategy_applied == DuplicateHandlingStrategy.REPLACE:
+                self.logger.info(f"Moved: {file_path.name} → {category.value}/ (replaced existing)")
+            else:
+                self.logger.info(f"Moved: {file_path.name} → {category.value}/")
             return "moved"
         else:
             raise FileOperationError(f"Failed to move {file_path.name}: {result.error}")
@@ -441,10 +447,10 @@ class FileOrganizer:
                 )
                 
                 if result.success:
-                    self.logger.info(f"Restored: {operation.destination.name} → {operation.source.parent.name}/")
+                    self.logger.info(f"Reverted: {operation.destination.name} back to {operation.source.parent.name}/")
                     stats["restored"] += 1
                 else:
-                    self.logger.error(f"Failed to restore file '{operation.destination.name}'")
+                    self.logger.error(f"Failed to revert file '{operation.destination.name}' to original location")
                     stats["errors"] += 1
             except Exception as e:
                 self.logger.error(f"Undo operation error: {str(e)}")

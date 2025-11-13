@@ -120,12 +120,12 @@ class LoggerService:
         self._log(LogLevel.SUCCESS, message)
 
     def separator(self) -> None:
-        """Log visual separator"""
-        separator = "═" * 100
-        self._log_history.append(separator)
+        """Log blank line for visual spacing"""
+        blank_line = ""
+        self._log_history.append(blank_line)
         for subscriber in self._subscribers[:]:  # Iterate over copy
             try:
-                subscriber(separator)
+                subscriber(blank_line)
             except Exception as e:
                 print(f"[LoggerService] Subscriber error: {str(e)}")
 

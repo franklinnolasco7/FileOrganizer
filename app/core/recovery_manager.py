@@ -188,6 +188,13 @@ class RecoveryManager:
             "errors": 0
         }
         
+        # Log start of restoration
+        self.logger.separator()
+        self.logger.info(f"Starting file restoration from backup: {backup.display_time}")
+        self.logger.info(f"Files to restore: {len(indices)}")
+        self.logger.info(f"Conflict strategy: {conflict_strategy.capitalize()}")
+        self.logger.separator()
+        
         files_backup_dir = backup.backup_folder / "files"
         
         for idx in indices:
@@ -213,14 +220,14 @@ class RecoveryManager:
                 source_for_restore = dest_path
             
             if source_for_restore is None:
-                self.logger.warning(f"Cannot restore {original_path.name}: No source available")
+                self.logger.warning(f"Skipped: {original_path.name} - No backup copy or destination file found")
                 stats["skipped"] += 1
                 continue
             
             # Check if target already exists
             if original_path.exists():
                 if conflict_strategy == "skip":
-                    self.logger.info(f"Skipping {original_path.name}: Already exists")
+                    self.logger.info(f"Skipped: {original_path.name} - File already exists at original location")
                     stats["skipped"] += 1
                     continue
                 elif conflict_strategy == "rename":
@@ -230,10 +237,10 @@ class RecoveryManager:
                     while new_path.exists():
                         new_path = original_path.parent / f"{original_path.stem}_{counter}{original_path.suffix}"
                         counter += 1
+                    self.logger.info(f"Renamed: {original_path.name} → {new_path.name} (conflict avoided)")
                     original_path = new_path
                 elif conflict_strategy == "replace":
-                    # Will overwrite
-                    pass
+                    self.logger.info(f"Replacing: {original_path.name} at original location")
             
             try:
                 # Ensure parent directory exists
@@ -242,12 +249,24 @@ class RecoveryManager:
                 # Copy file back to original location
                 shutil.copy2(source_for_restore, original_path)
                 
-                self.logger.info(f"Restored: {original_path.name}")
+                # Show descriptive restore message
+                source_type = "backup" if movement.backup_filename else "destination"
+                self.logger.info(f"Restored: {original_path.name} from {source_type} → {original_path.parent}")
                 stats["restored"] += 1
                 
             except Exception as e:
                 self.logger.error(f"Failed to restore {original_path.name}: {e}")
                 stats["errors"] += 1
+        
+        # Log completion summary
+        self.logger.separator()
+        self.logger.success(f"Restoration Complete!")
+        self.logger.info(f"Successfully restored: {stats['restored']} file(s)")
+        if stats['skipped'] > 0:
+            self.logger.info(f"Skipped: {stats['skipped']} file(s)")
+        if stats['errors'] > 0:
+            self.logger.error(f"Errors: {stats['errors']} file(s)")
+        self.logger.separator()
         
         return stats
     
