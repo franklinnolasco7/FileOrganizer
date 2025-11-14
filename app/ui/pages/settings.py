@@ -8,15 +8,17 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtCore import QUrl
 
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, LineEdit, CheckBox, CardWidget,
-    BodyLabel, TitleLabel, SubtitleLabel, CaptionLabel, Theme, 
-    SpinBox, DoubleSpinBox, SmoothScrollArea, 
+    PushButton, PrimaryPushButton, LineEdit, CheckBox,
+    BodyLabel, TitleLabel, SubtitleLabel, CaptionLabel, Theme,
+    SpinBox, DoubleSpinBox, SmoothScrollArea,
     InfoBar, InfoBarPosition, ToolTipFilter, isDarkTheme,
     RadioButton, MessageBox, ComboBox
 )
 from qfluentwidgets import FluentIcon as FIF
 
 from app.config.config_manager import ConfigManager
+from app.ui.theme_utils import apply_page_theme, apply_message_box_theme
+from app.ui.widgets import ThemedCardWidget
 
 
 class SettingsPage:
@@ -33,6 +35,8 @@ class SettingsPage:
         self.config = config
         self.on_close = on_close
         self._parent = parent
+        self.content_widget = None
+        self.scroll_area = None
     
     def _show_info_bar(self, title: str, content: str) -> None:
         """Helper method to show success InfoBar with consistent styling
@@ -61,7 +65,7 @@ class SettingsPage:
         Returns:
             Tuple of (card, card_layout)
         """
-        card = CardWidget()
+        card = ThemedCardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(*margins)
         card_layout.setSpacing(spacing)
@@ -102,13 +106,17 @@ class SettingsPage:
         layout.addStretch()
         
         scroll.setWidget(widget)
+        self.scroll_area = scroll
+        self.content_widget = widget
+        apply_page_theme(widget, scroll)
         return scroll
 
-    def _create_theme_card(self) -> CardWidget:
+    def _create_theme_card(self) -> ThemedCardWidget:
         """Create card for theme selection."""
         card, card_layout = self._create_card()
         
-        card_layout.addWidget(SubtitleLabel("Appearance"))
+        subtitle = SubtitleLabel("Appearance")
+        card_layout.addWidget(subtitle)
         
         theme_layout = QHBoxLayout()
         theme_label = BodyLabel("Theme")
@@ -127,7 +135,7 @@ class SettingsPage:
         
         return card
 
-    def _create_persistent_paths_card(self) -> CardWidget:
+    def _create_persistent_paths_card(self) -> ThemedCardWidget:
         """Create card for persistent folder path settings."""
         card, card_layout = self._create_card()
         
@@ -175,7 +183,7 @@ class SettingsPage:
         
         return card
 
-    def _create_duplicate_handling_card(self) -> CardWidget:
+    def _create_duplicate_handling_card(self) -> ThemedCardWidget:
         """Create card for duplicate file handling settings."""
         card, card_layout = self._create_card()
         
@@ -220,7 +228,7 @@ class SettingsPage:
         
         self.config.set("duplicate_handling", strategy, persist=False)
 
-    def _create_size_filter_settings_card(self) -> CardWidget:
+    def _create_size_filter_settings_card(self) -> ThemedCardWidget:
         """Create card for file size filter default settings."""
         card, card_layout = self._create_card()
         
@@ -271,7 +279,7 @@ class SettingsPage:
         self.config.set("min_file_size_kb", min_size, persist=False)
         self.config.set("max_file_size_kb", max_size, persist=False)
 
-    def _create_log_export_card(self) -> CardWidget:
+    def _create_log_export_card(self) -> ThemedCardWidget:
         """Create card for activity log export directory settings."""
         card, card_layout = self._create_card()
         
@@ -331,6 +339,7 @@ class SettingsPage:
         
         if export_dir and not Path(export_dir).exists():
             w = MessageBox("Invalid Directory", "The specified directory does not exist.", self._parent)
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -341,7 +350,7 @@ class SettingsPage:
         
         self.config.set("log_export_directory", export_dir, persist=False)
 
-    def _create_recovery_backup_card(self) -> CardWidget:
+    def _create_recovery_backup_card(self) -> ThemedCardWidget:
         """Create card for recovery backup settings."""
         card, card_layout = self._create_card()
         
@@ -405,7 +414,8 @@ class SettingsPage:
         recovery_path = Path(self.config.get("recovery_backup_folder", str(Path.home() / "FileOrganizer_Recovery")))
         available_space = self._get_available_space(recovery_path)
         space_label = CaptionLabel(f"(Available: {available_space:.1f} GB)")
-        space_label.setStyleSheet("color: gray;")
+        color = "rgb(153, 153, 153)" if not isDarkTheme() else "rgb(176, 176, 176)"
+        space_label.setStyleSheet(f"color: {color};")
         self.recovery_space_label = space_label
         size_layout.addWidget(space_label)
         size_layout.addStretch()
@@ -426,7 +436,9 @@ class SettingsPage:
         retention_layout.addWidget(self.retention_spin)
         
         info_label = CaptionLabel("(Auto-deleted after this period)")
-        info_label.setStyleSheet("color: gray;")
+        color = "rgb(153, 153, 153)" if not isDarkTheme() else "rgb(176, 176, 176)"
+        info_label.setStyleSheet(f"color: {color};")
+        self.retention_info_label = info_label
         retention_layout.addWidget(info_label)
         retention_layout.addStretch()
         
@@ -543,7 +555,7 @@ class SettingsPage:
         except Exception:
             return 0.0  # Return 0 if check fails
 
-    def _create_custom_categories_card(self) -> CardWidget:
+    def _create_custom_categories_card(self) -> ThemedCardWidget:
         """Create card for managing custom file categories with modern design."""
         card, card_layout = self._create_card()
 
@@ -720,6 +732,7 @@ class SettingsPage:
         """Prompt user to add a custom category"""
         # Create custom dialog for category name using MessageBox style
         name_dialog = MessageBox("Add Custom Category", "Enter the name for your custom category", self._parent)
+        apply_message_box_theme(name_dialog)
         name_input = LineEdit()
         name_input.setPlaceholderText("e.g., E-Books, Music, Projects")
         name_dialog.textLayout.addWidget(name_input)
@@ -739,6 +752,7 @@ class SettingsPage:
 
         # Create custom dialog for extensions using MessageBox style
         ext_dialog = MessageBox("Add Extensions", f"Enter file extensions for '{name}' (comma-separated)", self._parent)
+        apply_message_box_theme(ext_dialog)
         ext_input = LineEdit()
         ext_input.setPlaceholderText("e.g., pdf, docx, txt")
         ext_dialog.textLayout.addWidget(ext_input)
@@ -759,6 +773,7 @@ class SettingsPage:
         extensions = [ext.strip().lstrip(".").lower() for ext in exts.split(",") if ext.strip()]
         if not extensions:
             w = MessageBox("Invalid Input", "No valid extensions provided.", self._parent)
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -772,6 +787,7 @@ class SettingsPage:
                 f"Extensions cannot contain spaces: {', '.join(invalid_exts)}\n\nPlease use comma to separate extensions.",
                 self._parent
             )
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -788,6 +804,7 @@ class SettingsPage:
         """Remove a specific custom category with confirmation."""
         # Confirm removal
         w = MessageBox("Confirm Removal", f"Remove custom category '{category_name}'?", self._parent)
+        apply_message_box_theme(w)
         w.yesButton.setText("Yes")
         w.cancelButton.setText("No")
         
@@ -800,6 +817,7 @@ class SettingsPage:
         """Edit an existing custom category's name and extensions."""
         # Step 1: Edit category name
         name_dialog = MessageBox("Edit Category Name", "Edit the category name", self._parent)
+        apply_message_box_theme(name_dialog)
         name_input = LineEdit()
         name_input.setPlaceholderText("e.g., E-Books, Music, Projects")
         name_input.setText(category_name)
@@ -821,6 +839,7 @@ class SettingsPage:
         
         # Step 2: Edit extensions
         ext_dialog = MessageBox("Edit Extensions", f"Edit extensions for '{new_name}' (comma-separated)", self._parent)
+        apply_message_box_theme(ext_dialog)
         ext_input = LineEdit()
         ext_input.setPlaceholderText("e.g., pdf, docx, txt")
         ext_input.setText(", ".join(current_extensions))
@@ -839,6 +858,7 @@ class SettingsPage:
         exts = ext_input.text().strip()
         if not exts:
             w = MessageBox("Invalid Input", "Extensions cannot be empty.", self._parent)
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -847,6 +867,7 @@ class SettingsPage:
         extensions = [ext.strip().lstrip(".").lower() for ext in exts.split(",") if ext.strip()]
         if not extensions:
             w = MessageBox("Invalid Input", "No valid extensions provided.", self._parent)
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -860,6 +881,7 @@ class SettingsPage:
                 f"Extensions cannot contain spaces: {', '.join(invalid_exts)}\n\nPlease use comma to separate extensions.",
                 self._parent
             )
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
@@ -923,8 +945,24 @@ class SettingsPage:
             self._show_info_bar("Settings Saved", "All settings have been saved successfully!")
         except Exception as e:
             w = MessageBox("Error", f"Failed to save settings: {str(e)}", self._parent)
+            apply_message_box_theme(w)
             w.cancelButton.hide()
             w.yesButton.setText("OK")
             w.exec()
+    
+    def apply_theme(self) -> None:
+        """Apply theme-aware colors to caption labels"""
+        # The gray caption labels need manual theme updates
+        color = "rgb(153, 153, 153)" if not isDarkTheme() else "rgb(176, 176, 176)"
+        if hasattr(self, 'content_widget') and self.content_widget is not None:
+            apply_page_theme(self.content_widget, getattr(self, 'scroll_area', None))
+        
+        # Apply to recovery space label if it exists
+        if hasattr(self, 'recovery_space_label'):
+            self.recovery_space_label.setStyleSheet(f"color: {color};")
+        
+        # Apply to retention info label if it exists
+        if hasattr(self, 'retention_info_label'):
+            self.retention_info_label.setStyleSheet(f"color: {color};")
 
 

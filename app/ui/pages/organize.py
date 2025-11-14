@@ -4,14 +4,15 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget
 from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
-    PushButton, PrimaryPushButton, CheckBox, CardWidget,
+    PushButton, PrimaryPushButton, CheckBox,
     BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel, CaptionLabel,
     DoubleSpinBox, SmoothScrollArea, ToolTipFilter, isDarkTheme
 )
 from qfluentwidgets import FluentIcon as FIF
 
 from app.core.constants import FileCategory, CUSTOM_CATEGORIES
-from app.ui.widgets import DragDropLineEdit, ColoredPlainTextEdit
+from app.ui.widgets import DragDropLineEdit, ColoredPlainTextEdit, ThemedCardWidget
+from app.ui.theme_utils import apply_page_theme
 
 
 class OrganizePage:
@@ -36,6 +37,8 @@ class OrganizePage:
         self.on_preview = on_preview or (lambda: None)
         self.on_export_log = on_export_log or (lambda: None)
         self.hint_labels = []  # Store hint labels for theme updates
+        self.scroll_area = None
+        self.content_widget = None
 
     def _create_card(self, margins=(12, 16, 12, 16), spacing=16):
         """Helper method to create a CardWidget with consistent layout
@@ -47,7 +50,7 @@ class OrganizePage:
         Returns:
             Tuple of (card, card_layout)
         """
-        card = CardWidget()
+        card = ThemedCardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(*margins)
         card_layout.setSpacing(spacing)
@@ -76,9 +79,12 @@ class OrganizePage:
 
         scroll.setWidget(widget)
         self.root_widget = scroll
+        self.scroll_area = scroll
+        self.content_widget = widget
+        apply_page_theme(widget, scroll)
         return scroll
 
-    def _create_source_card(self) -> CardWidget:
+    def _create_source_card(self) -> ThemedCardWidget:
         """Create source folder selection card with drag-drop support"""
         card, layout = self._create_card(margins=(16, 16, 16, 16), spacing=10)
 
@@ -105,7 +111,7 @@ class OrganizePage:
         layout.addLayout(input_layout)
         return card
 
-    def _create_dest_card(self) -> CardWidget:
+    def _create_dest_card(self) -> ThemedCardWidget:
         """Create destination folder selection card with drag-drop support"""
         card, layout = self._create_card(margins=(16, 16, 16, 16), spacing=10)
 
@@ -132,7 +138,7 @@ class OrganizePage:
         layout.addLayout(input_layout)
         return card
 
-    def _create_category_card(self) -> CardWidget:
+    def _create_category_card(self) -> ThemedCardWidget:
         """Create file category selection card"""
         card, layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
 
@@ -167,7 +173,7 @@ class OrganizePage:
         layout.addLayout(check_layout)
         return card
     
-    def _create_size_filter_card(self) -> CardWidget:
+    def _create_size_filter_card(self) -> ThemedCardWidget:
         """Create file size filter card"""
         card, layout = self._create_card(margins=(16, 16, 16, 16), spacing=12)
         
@@ -235,7 +241,7 @@ class OrganizePage:
         for check in self.category_checks.values():
             check.setChecked(False)
 
-    def _create_log_card(self) -> CardWidget:
+    def _create_log_card(self) -> ThemedCardWidget:
         """Create activity log card"""
         card, layout = self._create_card(margins=(16, 16, 16, 16), spacing=10)
 

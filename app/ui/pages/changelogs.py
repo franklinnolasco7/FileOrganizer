@@ -3,11 +3,13 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget
 from PyQt6.QtCore import Qt
 
 from qfluentwidgets import (
-    CardWidget, BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel, CaptionLabel,
+    BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel, CaptionLabel,
     SmoothScrollArea, isDarkTheme
 )
 from qfluentwidgets import FluentIcon as FIF
 
+from app.ui.theme_utils import apply_page_theme
+from app.ui.widgets import ThemedCardWidget
 
 class ChangelogsPage:
     """Changelogs page showing version history"""
@@ -15,6 +17,8 @@ class ChangelogsPage:
     def __init__(self) -> None:
         """Initialize changelogs page"""
         self.date_labels = []  # Store date labels for theme updates
+        self.scroll_area = None
+        self.content_widget = None
     
     def _create_card(self, margins=(16, 16, 16, 16), spacing=12):
         """Helper method to create a CardWidget with consistent layout
@@ -26,7 +30,7 @@ class ChangelogsPage:
         Returns:
             Tuple of (card, card_layout)
         """
-        card = CardWidget()
+        card = ThemedCardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(*margins)
         card_layout.setSpacing(spacing)
@@ -117,9 +121,12 @@ class ChangelogsPage:
         layout.addStretch()
         
         scroll.setWidget(widget)
+        self.scroll_area = scroll
+        self.content_widget = widget
+        apply_page_theme(widget, scroll)
         return scroll
     
-    def _create_version_card(self, version: str, date: str, changes: list) -> CardWidget:
+    def _create_version_card(self, version: str, date: str, changes: list) -> ThemedCardWidget:
         """Create version card with changelog."""
         card, card_layout = self._create_card()
         
@@ -127,7 +134,8 @@ class ChangelogsPage:
         version_layout = QHBoxLayout()
         version_label = SubtitleLabel(f"v{version}")
         date_label = CaptionLabel(date)
-        date_label.setStyleSheet("color: gray;")
+        color = "rgb(153, 153, 153)" if not isDarkTheme() else "rgb(176, 176, 176)"
+        date_label.setStyleSheet(f"color: {color}; font-size: 11px;")
         self.date_labels.append(date_label)
         version_layout.addWidget(version_label)
         version_layout.addStretch()

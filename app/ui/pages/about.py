@@ -4,11 +4,13 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QCursor
 
 from qfluentwidgets import (
-    CardWidget, BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel,
+    BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel,
     SmoothScrollArea, HyperlinkLabel, isDarkTheme, MessageBox
 )
 from qfluentwidgets import FluentIcon as FIF
 
+from app.ui.theme_utils import apply_page_theme, apply_message_box_theme
+from app.ui.widgets import ThemedCardWidget
 
 class AboutPage:
     """About page with project information and credits"""
@@ -20,6 +22,8 @@ class AboutPage:
             parent: Parent widget for dialogs
         """
         self.parent = parent
+        self.scroll_area = None
+        self.content_widget = None
     
     def _get_text_color(self) -> str:
         """Get appropriate text color based on current theme
@@ -57,15 +61,18 @@ class AboutPage:
         layout.addStretch()
         
         scroll.setWidget(widget)
+        self.scroll_area = scroll
+        self.content_widget = widget
+        apply_page_theme(widget, scroll)
         return scroll
     
-    def _create_app_info_card(self) -> CardWidget:
+    def _create_app_info_card(self) -> ThemedCardWidget:
         """Create app information card
         
         Returns:
             App info card widget
         """
-        card = CardWidget()
+        card = ThemedCardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
         card_layout.setSpacing(12)
@@ -130,13 +137,13 @@ class AboutPage:
         
         return card
     
-    def _create_credits_card(self) -> CardWidget:
+    def _create_credits_card(self) -> ThemedCardWidget:
         """Create credits card
         
         Returns:
             Credits card widget
         """
-        card = CardWidget()
+        card = ThemedCardWidget()
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
         card_layout.setSpacing(12)
@@ -196,6 +203,7 @@ class AboutPage:
             f"You are about to open an external link:\n\n{url}\n\nDo you want to continue?",
             self.parent
         )
+        apply_message_box_theme(w)
         w.yesButton.setText("Yes")
         w.cancelButton.setText("No")
         

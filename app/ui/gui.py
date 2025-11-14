@@ -3,20 +3,20 @@ import sys
 from pathlib import Path
 from typing import List
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
+    QApplication, QVBoxLayout, QHBoxLayout, QWidget,
     QFileDialog, QMessageBox, QStackedWidget, QScrollArea, QTextBrowser, 
-    QPlainTextEdit, QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+    QPlainTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QInputDialog, QButtonGroup
 )
 from PyQt6.QtCore import Qt, QTimer, QProcess, QUrl, QPropertyAnimation, QEasingCurve, QSize
-from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent, QDesktopServices
+from PyQt6.QtGui import QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, QDropEvent, QDesktopServices, QIcon
 
 from qfluentwidgets import (
     PushButton, PrimaryPushButton, LineEdit, CheckBox, PlainTextEdit, CardWidget,
     BodyLabel, TitleLabel, SubtitleLabel, StrongBodyLabel, CaptionLabel, setTheme, Theme, 
     NavigationInterface, SpinBox, DoubleSpinBox, NavigationItemPosition, SmoothScrollArea, 
     InfoBar, InfoBarPosition, ToolTipFilter, isDarkTheme, setCustomStyleSheet, ListWidget, 
-    RadioButton, HyperlinkLabel, MessageBox, Dialog, ComboBox
+    RadioButton, HyperlinkLabel, MessageBox, Dialog, ComboBox, FluentWindow, qconfig, toggleTheme
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -28,9 +28,10 @@ from app.core.file_manager import DuplicateHandlingStrategy
 
 
 from app.ui.widgets import DragDropLineEdit, ColoredPlainTextEdit, PreviewDialog
-from app.ui.pages import SettingsPage, RecoveryManagerPage, ChangelogsPage, OrganizePage, AboutPage
+from app.ui.pages import SettingsPage, ChangelogsPage, OrganizePage, AboutPage
+from app.ui.theme_utils import apply_page_theme, apply_message_box_theme, get_brand_icon
 
-class FileOrganizerWindow(QMainWindow):
+class FileOrganizerWindow(FluentWindow):
     """Main application window with navigation and page routing"""
 
     def __init__(
@@ -47,7 +48,7 @@ class FileOrganizerWindow(QMainWindow):
             logger: Logger service
         """
         super().__init__()
-
+        
         self.organizer = file_organizer
         self.config = config
         self.logger = logger
@@ -60,15 +61,16 @@ class FileOrganizerWindow(QMainWindow):
         saved_theme = self.config.get("theme", "dark")
         self.current_theme = Theme.LIGHT if saved_theme == "light" else Theme.DARK
         
+        # Set FluentWindow properties with larger size
+        self.brand_icon = get_brand_icon()
+        self.setWindowIcon(self.brand_icon)
+        self.setWindowTitle("File Organizer")
+        self.resize(1400, 850)  # Increased from 1100x700
+        
         self._setup_ui()
         
-        # Apply window background theme after UI is setup
-        self._apply_window_theme()
-        
-        # Force widget updates to ensure theme colors apply properly
-        QApplication.processEvents()
-        self.update()
-        self.repaint()
+        # Connect to theme change signal for proper updates
+        qconfig.themeChanged.connect(self._on_theme_changed)
 
     def _show_info_bar(self, title: str, content: str, position=InfoBarPosition.TOP, error: bool = False) -> None:
         """Helper method to show InfoBar with consistent styling
@@ -92,15 +94,9 @@ class FileOrganizerWindow(QMainWindow):
 
     def _setup_ui(self) -> None:
         """Setup main UI structure"""
-        self.setWindowTitle("File Organizer")
-        self.resize(1100, 700)
         self._center_window()
 
-        self.stacked_widget = QStackedWidget()
-        self.nav = NavigationInterface(self)
-        self.nav.setCollapsible(True)
-        self.nav.setExpandWidth(250)
-
+        # Create all pages first
         # Create Organize Page
         self.organize_page_obj = OrganizePage(
             on_organize=self._handle_organize,
@@ -112,105 +108,28 @@ class FileOrganizerWindow(QMainWindow):
             on_export_log=self._export_log,
         )
         self.organize_page = self.organize_page_obj.create()
-
-        # Create Recovery Manager Page
-        self.recovery_page_obj = RecoveryManagerPage(self.config, self.logger, parent=self)
-        self.recovery_page = self.recovery_page_obj.create()
+        self.organize_page.setObjectName("organizePage")
 
         # Create Changelogs Page
         self.changelogs_page_obj = ChangelogsPage()
         changelogs_page = self.changelogs_page_obj.create()
+        changelogs_page.setObjectName("changelogsPage")
 
         # Create Settings Page
         self.settings_page_obj = SettingsPage(self.config, on_close=self._return_to_organize, parent=self)
         self.settings_page = self.settings_page_obj.create()
+        self.settings_page.setObjectName("settingsPage")
 
         # Create About Page
         self.about_page_obj = AboutPage(parent=self)
         about_page = self.about_page_obj.create()
+        about_page.setObjectName("aboutPage")
 
-        # Add all pages to stack widget
-        self.stacked_widget.addWidget(self.organize_page)
-        self.stacked_widget.addWidget(self.recovery_page)
-        self.stacked_widget.addWidget(changelogs_page)
-        self.stacked_widget.addWidget(self.settings_page)
-        self.stacked_widget.addWidget(about_page)
-
-        # Add navigation items
-        nav_items = [
-            {
-                "routeKey": "organize",
-                "icon": FIF.FOLDER,
-                "text": "Organize",
-                "onClick": lambda: self.stacked_widget.setCurrentIndex(0),
-                "tooltip": "Organize your files into categories"
-            },
-            {
-                "routeKey": "recovery",
-                "icon": FIF.SYNC,
-                "text": "Recovery",
-                "onClick": lambda: self.stacked_widget.setCurrentIndex(1),
-                "tooltip": "View and restore from backups"
-            },
-            {
-                "routeKey": "changelogs",
-                "icon": FIF.HISTORY,
-                "text": "Changelogs",
-                "onClick": lambda: self.stacked_widget.setCurrentIndex(2),
-                "tooltip": "View version history and updates"
-            },
-            {
-                "routeKey": "about",
-                "icon": FIF.INFO,
-                "text": "About",
-                "onClick": lambda: self.stacked_widget.setCurrentIndex(4),
-                "tooltip": "About this application"
-            }
-        ]
-        
-        # Add main navigation items
-        for item in nav_items:
-            self.nav.addItem(
-                routeKey=item["routeKey"],
-                icon=item["icon"],
-                text=item["text"],
-                onClick=item["onClick"],
-                tooltip=item["tooltip"]
-            )
-        
-        # Add bottom navigation items
-        bottom_items = [
-            {
-                "routeKey": "settings",
-                "icon": FIF.SETTING,
-                "text": "Settings",
-                "onClick": lambda: self.stacked_widget.setCurrentIndex(3),
-                "tooltip": "Configure application settings"
-            }
-        ]
-        
-        for item in bottom_items:
-            self.nav.addItem(
-                routeKey=item["routeKey"],
-                icon=item["icon"],
-                text=item["text"],
-                onClick=item["onClick"],
-                position=NavigationItemPosition.BOTTOM,
-                tooltip=item["tooltip"]
-            )
-
-        # Setup main layout
-        main_widget = QWidget()
-        main_widget.setObjectName("centralWidget")
-        layout = QHBoxLayout(main_widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.nav)
-        layout.addWidget(self.stacked_widget, 1)
-        self.setCentralWidget(main_widget)
-
-        # Set initial page
-        self.stacked_widget.setCurrentWidget(self.organize_page)
+        # Add navigation items using FluentWindow's interface
+        self.addSubInterface(self.organize_page, FIF.FOLDER, "Organize", NavigationItemPosition.TOP)
+        self.addSubInterface(changelogs_page, FIF.HISTORY, "Changelogs", NavigationItemPosition.TOP)
+        self.addSubInterface(about_page, FIF.INFO, "About", NavigationItemPosition.TOP)
+        self.addSubInterface(self.settings_page, FIF.SETTING, "Settings", NavigationItemPosition.BOTTOM)
 
         # Load saved settings on startup
         self._apply_saved_settings()
@@ -222,17 +141,22 @@ class FileOrganizerWindow(QMainWindow):
         self.organize_page_obj.apply_hint_label_theme()
         self.changelogs_page_obj.apply_date_label_theme()
         
+        # Apply theme to settings page caption labels
+        if hasattr(self.settings_page_obj, 'apply_theme'):
+            self.settings_page_obj.apply_theme()
+        
+        # Apply theme to cards after UI is fully loaded
+        QTimer.singleShot(100, self._apply_theme_to_cards)
+        
         # Connect source input changes to update button states
         self.organize_page_obj.source_input.textChanged.connect(self._update_button_states)
         
         # Set initial button states
         self._update_button_states()
-        
-        # Force update all pages to ensure proper theme rendering
-        for i in range(self.stacked_widget.count()):
-            page = self.stacked_widget.widget(i)
-            if page:
-                page.update()
+
+    def _on_page_changed(self, index):
+        """Handle page change in stacked widget"""
+        pass
 
     def _center_window(self) -> None:
         """Center window on screen"""
@@ -264,194 +188,62 @@ class FileOrganizerWindow(QMainWindow):
 
     def _return_to_organize(self) -> None:
         """Return from settings to organize page."""
-        self.stacked_widget.setCurrentWidget(self.organize_page)
+        self.switchTo(self.organize_page)
 
-    def _apply_window_theme(self) -> None:
-        """Apply theme-aware background color to the main window and content areas"""
-        # Improved color palette for better UI/UX with enhanced contrast
-        if self.current_theme == Theme.LIGHT:
-            # Light mode: Better contrast for visible borders and outlines
-            main_bg = "rgb(243, 244, 246)"        # Light gray background
-            page_bg = "rgb(250, 250, 251)"        # Slightly off-white for content
-            nav_bg = "rgb(248, 249, 250)"         # Very subtle gray for navigation
-            border_color = "rgb(229, 231, 235)"   # Visible border color
-            card_bg = "rgb(255, 255, 255)"        # Pure white for cards to stand out
-            card_hover_bg = "rgb(245, 246, 247)"  # More noticeable hover - medium gray
-            shadow = "rgba(0, 0, 0, 0.05)"        # Subtle shadow for depth
-        else:
-            # Dark mode: Comfortable dark grays
-            main_bg = "rgb(32, 33, 36)"           # Modern dark gray
-            page_bg = "rgb(32, 33, 36)"           # Same as main for consistency
-            nav_bg = "rgb(45, 46, 49)"            # Slightly lighter for navigation
-            border_color = "rgb(60, 63, 68)"      # Dark mode border
-            card_bg = "rgb(38, 39, 43)"           # Slightly lighter for cards
-            card_hover_bg = "rgb(48, 49, 53)"     # More noticeable hover - lighter
-            shadow = "rgba(0, 0, 0, 0.3)"         # Stronger shadow in dark mode
+    def _on_theme_changed(self, theme: Theme) -> None:
+        """Handle theme changes from qconfig"""
+        # Update all CardWidget backgrounds manually since they don't auto-update
+        self._apply_theme_to_cards()
         
-        # Apply comprehensive styling for smooth theme experience
-        self.setStyleSheet(f"""
-            /* Main window background */
-            QMainWindow {{
-                background-color: {main_bg};
-            }}
-            
-            /* Central widget (contains nav + content) */
-            QWidget#centralWidget {{
-                background-color: {main_bg};
-            }}
-            
-            /* Content area */
-            QStackedWidget {{
-                background-color: {page_bg};
-                border-radius: 0px;
-            }}
-            
-            /* Smooth scroll areas */
-            SmoothScrollArea {{
-                background-color: {page_bg};
-                border: none;
-            }}
-            
-            QWidget#pageScrollArea {{
-                background-color: {page_bg};
-                border: none;
-            }}
-            
-            QWidget#pageContentWidget {{
-                background-color: {page_bg};
-            }}
-            
-            /* Enhanced card styling for better visibility */
-            CardWidget {{
-                background-color: {card_bg};
-                border: 1px solid {border_color};
-                border-radius: 8px;
-            }}
-            
-            CardWidget:hover {{
-                background-color: {card_hover_bg};
-                border: 1px solid {border_color};
-            }}
-            
-            /* Activity log text area - clearly visible border */
-            ColoredPlainTextEdit, PlainTextEdit#activityLogTextEdit {{
-                background-color: {card_bg};
-                border: 1px solid {border_color};
-                border-radius: 6px;
-                padding: 8px;
-            }}
-            
-            /* Line edits - subtle borders */
-            LineEdit {{
-                border: 1px solid {border_color};
-            }}
-            
-            /* List widgets - visible borders */
-            ListWidget {{
-                border: 1px solid {border_color};
-                background-color: {card_bg};
-            }}
-            
-            /* Dialog windows - theme-aware popups */
-            QDialog, QMessageBox, QInputDialog {{
-                background-color: {card_bg};
-            }}
-            
-            QMessageBox QLabel {{
-                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
-                background-color: transparent;
-            }}
-            
-            QInputDialog QLabel {{
-                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
-                background-color: transparent;
-            }}
-            
-            QInputDialog QLineEdit {{
-                background-color: {page_bg};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                padding: 6px;
-                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
-            }}
-            
-            /* Dialog buttons - QPushButton styling */
-            QDialog QPushButton, QMessageBox QPushButton, QInputDialog QPushButton {{
-                background-color: {page_bg};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                padding: 6px 16px;
-                color: {"rgb(30, 30, 30)" if self.current_theme == Theme.LIGHT else "rgb(230, 230, 230)"};
-                min-width: 70px;
-            }}
-            
-            QDialog QPushButton:hover, QMessageBox QPushButton:hover, QInputDialog QPushButton:hover {{
-                background-color: {"rgb(240, 241, 243)" if self.current_theme == Theme.LIGHT else "rgb(48, 49, 53)"};
-                border: 1px solid {"rgb(200, 201, 205)" if self.current_theme == Theme.LIGHT else "rgb(70, 73, 78)"};
-            }}
-            
-            QDialog QPushButton:pressed, QMessageBox QPushButton:pressed, QInputDialog QPushButton:pressed {{
-                background-color: {"rgb(230, 231, 233)" if self.current_theme == Theme.LIGHT else "rgb(58, 59, 63)"};
-            }}
-            
-            /* Default/Primary button styling - matches qfluentwidgets accent color */
-            /* Using cyan to match CheckBox checkmarks and PrimaryPushButton */
-            QDialog QPushButton:default, QMessageBox QPushButton:default {{
-                background-color: rgb(0, 159, 170);
-                color: rgb(255, 255, 255);
-                border: 1px solid rgb(0, 159, 170);
-                font-weight: 500;
-            }}
-            
-            QDialog QPushButton:default:hover, QMessageBox QPushButton:default:hover {{
-                background-color: {"rgb(0, 139, 150)" if self.current_theme == Theme.LIGHT else "rgb(26, 173, 184)"};
-            }}
-            
-            QDialog QPushButton:default:pressed, QMessageBox QPushButton:default:pressed {{
-                background-color: {"rgb(0, 119, 130)" if self.current_theme == Theme.LIGHT else "rgb(0, 139, 150)"};
-            }}
-        """)
-
-    def _toggle_theme(self) -> None:
-        """Toggle between light and dark theme"""
-        # Toggle theme
-        if self.current_theme == Theme.DARK:
-            self.current_theme = Theme.LIGHT
-            theme_name = "light"
-        else:
-            self.current_theme = Theme.DARK
-            theme_name = "dark"
-        
-        # Apply theme to all qfluentwidgets components
-        # save=False because we manage our own config, lazy=False for immediate update
-        setTheme(self.current_theme, save=False, lazy=False)
-        
-        # Apply window background color
-        self._apply_window_theme()
-        
-        # Force complete widget tree update
-        self.update()
-        self.repaint()
-        if hasattr(self, 'nav'):
-            self.nav.update()
-        if hasattr(self, 'stacked_widget'):
-            self.stacked_widget.update()
-        
-        # Update log colors if log widget exists
-        if hasattr(self, 'organize_page_obj') and hasattr(self.organize_page_obj, 'log_text'):
-            self.organize_page_obj.log_text._update_colors()
-        
-        # Update hint labels in organize page
+        # Update custom labels that need manual theme updates
         if hasattr(self, 'organize_page_obj'):
             self.organize_page_obj.apply_hint_label_theme()
         
-        # Update date labels in changelogs page
         if hasattr(self, 'changelogs_page_obj'):
             self.changelogs_page_obj.apply_date_label_theme()
         
-        # Refresh custom categories styling if settings page exists
-        if hasattr(self, 'settings_page_obj') and hasattr(self.settings_page_obj, 'categories_layout'):
-            self.settings_page_obj._refresh_custom_categories_list()
+        # Apply theme to settings page
+        if hasattr(self, 'settings_page_obj'):
+            # Refresh custom categories styling
+            if hasattr(self.settings_page_obj, 'categories_layout'):
+                self.settings_page_obj._refresh_custom_categories_list()
+            # Apply theme to caption labels
+            if hasattr(self.settings_page_obj, 'apply_theme'):
+                self.settings_page_obj.apply_theme()
+        
+        # Apply shared page backgrounds
+        for page_obj in [
+            getattr(self, 'organize_page_obj', None),
+            getattr(self, 'settings_page_obj', None),
+            getattr(self, 'about_page_obj', None),
+            getattr(self, 'changelogs_page_obj', None),
+        ]:
+            if page_obj and getattr(page_obj, 'content_widget', None) is not None:
+                apply_page_theme(page_obj.content_widget, getattr(page_obj, 'scroll_area', None))
+
+        # Update log colors if log widget exists
+        if hasattr(self, 'organize_page_obj') and hasattr(self.organize_page_obj, 'log_text'):
+            self.organize_page_obj.log_text._update_colors()
+    
+    def _apply_theme_to_cards(self) -> None:
+        """Apply theme colors to all CardWidgets"""
+        # Find all CardWidget instances and update their stylesheets
+        for page in [self.organize_page, self.settings_page]:
+            if page:
+                cards = page.findChildren(CardWidget)
+                for card in cards:
+                    # Force CardWidget to update by clearing and reapplying its stylesheet
+                    card.setStyleSheet(card.styleSheet())
+
+    def _toggle_theme(self) -> None:
+        """Toggle between light and dark theme"""
+        # Use QFluentWidgets' built-in toggleTheme() function
+        # This properly switches between light/dark and emits themeChanged signal
+        toggleTheme()
+        
+        # Update our local theme reference
+        self.current_theme = qconfig.theme
+        theme_name = "light" if self.current_theme == Theme.LIGHT else "dark"
         
         # Save preference to config
         self.config.set("theme", theme_name)
@@ -608,6 +400,7 @@ class FileOrganizerWindow(QMainWindow):
                     f"Recovery backup saved to:\n{recovery_folder}",
                     self
                 )
+                apply_message_box_theme(w)
                 w.cancelButton.hide()
                 w.yesButton.setText("OK")
                 w.exec()
@@ -645,6 +438,7 @@ class FileOrganizerWindow(QMainWindow):
             "Files will be moved back to their original locations.",
             self
         )
+        apply_message_box_theme(w)
         w.yesButton.setText("Yes")
         w.cancelButton.setText("No")
         
@@ -762,6 +556,7 @@ def main() -> None:
     # Create QApplication FIRST
     app = QApplication(sys.argv)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
+    app.setWindowIcon(get_brand_icon())
     
     # NOW import everything else
     from app.config.config_manager import DEFAULT_CONFIG_SCHEMA, ConfigManager
@@ -769,18 +564,17 @@ def main() -> None:
     from app.core.file_manager import FileManager, DuplicateHandlingStrategy
     from app.core.file_organizer import FileOrganizer
     from app.services.logger_service import LoggerService
-    from qfluentwidgets import setTheme, Theme
+    from qfluentwidgets import Theme, setTheme
 
     logger = LoggerService(max_history=1000)
     
     config_file = Path.home() / ".file_organizer_config.json"
     config = ConfigManager(config_file, DEFAULT_CONFIG_SCHEMA)
     
-    # Set theme BEFORE creating window
+    # Set theme BEFORE creating window using setTheme() as documented
     saved_theme = config.get("theme", "dark")
     theme = Theme.LIGHT if saved_theme == "light" else Theme.DARK
-    # save=False because we manage config ourselves, lazy=False for immediate effect
-    setTheme(theme, save=False, lazy=False)
+    setTheme(theme)
     
     # Get duplicate handling strategy from config
     strategy_str = config.get("duplicate_handling", "rename")

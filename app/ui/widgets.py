@@ -1,16 +1,122 @@
 """Custom widgets for File Organizer UI"""
 from pathlib import Path
+from typing import Optional
 from PyQt6.QtWidgets import (
-    QPlainTextEdit, QDialog, QVBoxLayout, QHBoxLayout, QWidget,
+    QPlainTextEdit, QVBoxLayout, QHBoxLayout, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import Qt, QTimer, QRectF
+from PyQt6.QtCore import Qt, QTimer, QRectF, QEvent
 from PyQt6.QtGui import (
     QTextCursor, QColor, QTextCharFormat, QDragEnterEvent, 
     QDropEvent, QPainter, QPen, QPalette
 )
-from qfluentwidgets import LineEdit, PlainTextEdit, CardWidget, TitleLabel, BodyLabel, IconWidget
+from qfluentwidgets import (
+    LineEdit, PlainTextEdit, CardWidget, TitleLabel, BodyLabel,
+    IconWidget, FluentTitleBar, NavigationToolButton, qconfig, isDarkTheme
+)
 from qfluentwidgets import FluentIcon as FIF
+from qframelesswindow import FramelessDialog
+
+from app.ui.theme_utils import apply_dialog_theme, get_theme_palette, get_brand_icon
+
+
+def _to_qcolor(value: Optional[str]) -> QColor:
+    """Convert CSS-like palette strings (rgb/rgba/hex) into valid QColor objects."""
+    if not value:
+        return QColor(0, 0, 0)
+
+    text = value.strip()
+
+    if text.startswith("#"):
+        color = QColor(text)
+        if color.isValid():
+            return color
+
+    if text.startswith("rgba"):
+        parts = [p.strip() for p in text[5:-1].split(",")]
+        if len(parts) == 4:
+            try:
+                r, g, b = (int(float(part)) for part in parts[:3])
+                alpha_float = float(parts[3])
+                alpha = int(alpha_float * 255) if alpha_float <= 1 else int(alpha_float)
+                return QColor(r, g, b, max(0, min(255, alpha)))
+            except ValueError:
+                pass
+
+    if text.startswith("rgb"):
+        parts = [p.strip() for p in text[4:-1].split(",")]
+        if len(parts) == 3:
+            try:
+                r, g, b = (int(float(part)) for part in parts)
+                return QColor(r, g, b)
+            except ValueError:
+                pass
+
+    color = QColor(text)
+    return color if color.isValid() else QColor(0, 0, 0)
+
+
+class ThemedCardWidget(CardWidget):
+    """Card widget with crisp edges and palette-aware fill/border."""
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        background_role: str = "card_bg",
+        border_role: str = "panel_border",
+        border_width: int = 1,
+        radius: int = 12,
+    ) -> None:
+        super().__init__(parent=parent)
+        self._background_role = background_role
+        self._border_role = border_role
+        self._border_width = border_width
+        self.setBorderRadius(radius)
+        qconfig.themeChanged.connect(self._on_theme_changed)
+
+    def set_background_role(self, role: str) -> None:
+        self._background_role = role
+        self.update()
+
+    def set_border_role(self, role: Optional[str]) -> None:
+        self._border_role = role
+        self.update()
+
+    def set_border_width(self, width: int) -> None:
+        self._border_width = width
+        self.update()
+
+    def _on_theme_changed(self, _theme) -> None:
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        palette = get_theme_palette()
+        base_color = _to_qcolor(palette.get(self._background_role, palette["card_bg"]))
+        border_value = _to_qcolor(palette.get(self._border_role)) if self._border_role else None
+
+        # Apply subtle hover/press feedback similar to Fluent cards
+        fill = QColor(base_color)
+        if self.isPressed:
+            factor = 115 if isDarkTheme() else 96
+            fill = fill.darker(factor)
+        elif self.isHover:
+            factor = 107 if isDarkTheme() else 103
+            fill = fill.lighter(factor)
+
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        rect = QRectF(self.rect())
+        if self._border_width:
+            inset = self._border_width / 2
+            rect = rect.adjusted(inset, inset, -inset, -inset)
+
+        if border_value and border_value.isValid():
+            painter.setPen(QPen(border_value, self._border_width))
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect, self.borderRadius, self.borderRadius)
 
 
 class DragDropLineEdit(LineEdit):
@@ -265,56 +371,168 @@ class ColoredPlainTextEdit(PlainTextEdit):
         return "INFO"
 
 
-class PreviewDialog(QDialog):
+class PreviewTitleBar(FluentTitleBar):
+    """Fluent title bar variant that mirrors the main window chrome."""
+
+    def __init__(self, parent, on_back) -> None:
+        super().__init__(parent)
+        self.nav_container = QWidget(self)
+        self.nav_container.setObjectName("previewNavContainer")
+        self.nav_container.setFixedWidth(48)
+        nav_layout = QHBoxLayout(self.nav_container)
+        nav_layout.setContentsMargins(4, 5, 4, 5)
+        nav_layout.setSpacing(4)
+        nav_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.back_button = NavigationToolButton(FIF.RETURN, self.nav_container)
+        self.back_button.setObjectName("previewBackButton")
+        self.back_button.setFixedSize(40, 36)
+        self.back_button.clicked.connect(on_back)
+        nav_layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # Insert navigation container before the window icon so spacing matches the Fluent window
+        self.hBoxLayout.insertWidget(0, self.nav_container, 0, Qt.AlignmentFlag.AlignLeft)
+
+
+class PreviewDialog(FramelessDialog):
     """Dialog showing file organization preview with modern fluent design."""
     
     def __init__(self, preview_data: dict, parent=None):
         """Initialize preview dialog with file data."""
         super().__init__(parent)
+        self.setObjectName("previewDialog")
+        self.setWindowIcon(get_brand_icon())
         self.setWindowTitle("File Organization Preview")
+        self.setResizeEnabled(True)
         self.resize(950, 650)
-        
-        # Main layout
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(20)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        self._title_bar = PreviewTitleBar(self, self.reject)
+        self._title_bar.setObjectName("previewDialogTitleBar")
+        self.setTitleBar(self._title_bar)
+        self._title_bar.setTitle(self.windowTitle())
+        self._title_bar.setIcon(self.windowIcon())
+        # Re-enable maximize support that FramelessDialog disables by default
+        if hasattr(self, "windowEffect"):
+            self.windowEffect.addWindowAnimation(self.winId())
+        outer_layout.addWidget(self._title_bar)
+
+        self._title_divider = QWidget(self)
+        self._title_divider.setObjectName("previewTitleDivider")
+        self._title_divider.setFixedHeight(1)
+        outer_layout.addWidget(self._title_divider)
+
+        self._frame_widget = QWidget(self)
+        self._frame_widget.setObjectName("previewFrameWidget")
+        self._frame_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        outer_layout.addWidget(self._frame_widget, 1)
+
+        frame_layout = QVBoxLayout(self._frame_widget)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+
+        content_widget = QWidget(self._frame_widget)
+        content_widget.setObjectName("previewContentWidget")
+        frame_layout.addWidget(content_widget, 1)
+
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 24, 32, 24)
+        content_layout.setSpacing(20)
         
         # Header with title
         title_text = f"Found {preview_data['total']} files to organize"
         if preview_data.get('skipped_by_size', 0) > 0:
             title_text += f" ({preview_data['skipped_by_size']} skipped by size filter)"
         title = TitleLabel(title_text)
-        layout.addWidget(title)
-        
+        content_layout.addWidget(title)
+
         # Category summary in a modern card
         if preview_data['summary']:
             summary_card = self._create_summary_card(preview_data['summary'])
-            layout.addWidget(summary_card)
-        
+            content_layout.addWidget(summary_card)
+
         # File list section with header
+        self._file_header = None
         if preview_data['files']:
-            file_header = BodyLabel("File Details")
-            file_header.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
-            layout.addWidget(file_header)
-            
+            self._file_header = BodyLabel("File Details")
+            self._file_header.setObjectName("previewFileSectionLabel")
+            self._file_header.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+            content_layout.addWidget(self._file_header)
+
             table = self._create_file_table(preview_data['files'])
-            layout.addWidget(table, 1)
+            content_layout.addWidget(table, 1)
+
+        qconfig.themeChanged.connect(self._apply_theme)
+        self._apply_theme()
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._apply_theme()
+        super().changeEvent(event)
+
+    def _apply_theme(self) -> None:
+        """Apply light/dark palette to the preview shell."""
+        palette = get_theme_palette()
+        is_maximized = self.isMaximized()
+        radius = 0 if is_maximized else 12
+        border_rule = "border: none;" if is_maximized else f"border: 1px solid {palette['border']};"
+        header_bg = palette['title_bar_bg']
+        divider_color = palette['border']
+        page_bg = palette['page_bg']
+
+        self.setStyleSheet(
+            f"""
+            PreviewDialog {{
+                background-color: {page_bg};
+            }}
+            QWidget#previewFrameWidget {{
+                background-color: {page_bg};
+                {border_rule}
+                border-radius: {radius}px;
+            }}
+            QWidget#previewContentWidget {{
+                background-color: {page_bg};
+                border-radius: {max(radius - 2, 0)}px;
+            }}
+            QWidget#previewDialogTitleBar {{
+                background-color: {header_bg};
+                border-bottom: 1px solid {divider_color};
+            }}
+            QWidget#previewTitleDivider {{
+                background-color: {divider_color};
+            }}
+            QWidget#previewNavContainer {{
+                background-color: transparent;
+            }}
+            NavigationToolButton#previewBackButton {{
+                background-color: transparent;
+            }}
+            """
+        )
+        if self._file_header is not None:
+            self._file_header.setStyleSheet(
+                f"font-size: 14px; font-weight: 600; margin-top: 8px; color: {palette['text']};"
+            )
     
-    def _create_summary_card(self, summary: dict) -> CardWidget:
+    def _create_summary_card(self, summary: dict) -> ThemedCardWidget:
         """Create modern summary card with category counts."""
-        from qfluentwidgets import isDarkTheme
-        
-        card = CardWidget()
+        palette = get_theme_palette()
+
+        card = ThemedCardWidget(background_role="panel_bg", border_role="panel_border")
+        card.setObjectName("previewSummaryCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(16)
         
-        # Text color based on theme
-        text_color = "rgb(230, 230, 230)" if isDarkTheme() else "rgb(30, 30, 30)"
-        
         # Header
         header = BodyLabel("Files per Category")
-        header.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {text_color};")
+        header.setStyleSheet(
+            f"font-size: 13px; font-weight: 600; color: {palette['text']};"
+        )
         card_layout.addWidget(header)
         
         # Category chips in a flow layout
@@ -332,9 +550,6 @@ class PreviewDialog(QDialog):
             'Others': (FIF.FOLDER, 'rgb(201, 203, 207)'),
         }
         
-        # Text color based on theme
-        text_color = "rgb(230, 230, 230)" if isDarkTheme() else "rgb(30, 30, 30)"
-        
         for category, count in summary.items():
             icon, color = category_styles.get(category, (FIF.FOLDER, 'rgb(150, 150, 150)'))
             
@@ -343,6 +558,15 @@ class PreviewDialog(QDialog):
             chip_layout = QHBoxLayout(chip)
             chip_layout.setContentsMargins(12, 6, 12, 6)
             chip_layout.setSpacing(8)
+
+            chip.setStyleSheet(
+                f"""
+                QWidget {{
+                    background-color: {palette['dialog_surface']};
+                    border-radius: 16px;
+                }}
+                """
+            )
             
             # Icon
             icon_widget = IconWidget(icon)
@@ -351,7 +575,7 @@ class PreviewDialog(QDialog):
             
             # Category text
             label = BodyLabel(category)
-            label.setStyleSheet(f"font-weight: 500; color: {text_color};")
+            label.setStyleSheet(f"font-weight: 500; color: {palette['text']};")
             chip_layout.addWidget(label)
             
             # Count badge
@@ -375,27 +599,21 @@ class PreviewDialog(QDialog):
     
     def _create_file_table(self, files: list) -> QTableWidget:
         """Create modern table showing files and their destinations."""
-        from qfluentwidgets import isDarkTheme
-        
+        palette = get_theme_palette()
+
         table = QTableWidget()
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["File Name", "Size (KB)", "Current Location", "Destination Category"])
         table.setRowCount(len(files))
         
-        # Style the table for better appearance
-        bg_color = "rgb(38, 39, 43)" if isDarkTheme() else "rgb(255, 255, 255)"
-        alt_color = "rgb(45, 46, 50)" if isDarkTheme() else "rgb(248, 249, 250)"
-        border_color = "rgb(60, 63, 68)" if isDarkTheme() else "rgb(229, 231, 235)"
-        text_color = "rgb(230, 230, 230)" if isDarkTheme() else "rgb(30, 30, 30)"
-        header_bg = "rgb(48, 49, 53)" if isDarkTheme() else "rgb(243, 244, 246)"
-        
-        table.setStyleSheet(f"""
+        table.setStyleSheet(
+            f"""
             QTableWidget {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
+                background-color: {palette['dialog_surface']};
+                border: 1px solid {palette['dialog_border']};
                 border-radius: 8px;
-                gridline-color: {border_color};
-                color: {text_color};
+                gridline-color: {palette['dialog_border']};
+                color: {palette['text']};
                 outline: none;
             }}
             QTableWidget::item {{
@@ -403,8 +621,12 @@ class PreviewDialog(QDialog):
                 border: none;
                 outline: none;
             }}
+            QTableWidget::item:alternate {{
+                background-color: {palette['dialog_surface_alt']};
+            }}
             QTableWidget::item:selected {{
-                background-color: rgba(0, 159, 170, 0.2);
+                background-color: {palette['accent_soft']};
+                color: {palette['text']};
                 outline: none;
             }}
             QTableWidget::item:focus {{
@@ -412,16 +634,20 @@ class PreviewDialog(QDialog):
                 border: none;
             }}
             QHeaderView::section {{
-                background-color: {header_bg};
-                color: {text_color};
+                background-color: {palette['dialog_header_bg']};
+                color: {palette['text']};
                 padding: 10px;
                 border: none;
-                border-bottom: 2px solid {border_color};
+                border-bottom: 1px solid {palette['dialog_border']};
                 font-weight: 600;
                 font-size: 12px;
             }}
-        """)
-        
+            QTableCornerButton::section {{
+                background-color: {palette['dialog_header_bg']};
+                border: none;
+            }}
+        """
+        )
         table.setAlternatingRowColors(True)
         table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         table.verticalHeader().setVisible(False)
